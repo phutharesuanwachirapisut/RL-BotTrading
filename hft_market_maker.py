@@ -98,8 +98,8 @@ def run_backtest(asset):
 
 def run_live_dashboard(asset):
     print(f"\n{C_HEADER}--- DEPLOYMENT MODE ---{C_RESET}")
-    print("1. Sandbox (Demo/Testnet) - เทรดด้วยเงินจำลอง")
-    print(f"2. {C_RED}LIVE (Real Money){C_RESET} - เทรดด้วยเงินจริง")
+    print("1. Sandbox (Demo/Testnet)")
+    print(f"2. {C_RED}LIVE (Real Money){C_RESET}")
     
     mode_choice = get_user_input("Select Deployment Mode (1 or 2)", valid_options=['1', '2'])
     mode = "sandbox" if mode_choice == '1' else "live"
