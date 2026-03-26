@@ -1,15 +1,29 @@
-import os
 import polars as pl
+from dotenv import load_dotenv
+
+from pathlib import Path
+import os
+import sys
+
+# Replace the SCRIPT_DIR logic with this:
+try:
+    SCRIPT_DIR = Path(__file__).resolve().parent
+except NameError:
+    # This runs if __file__ isn't defined (Notebook/REPL)
+    SCRIPT_DIR = Path(os.getcwd())
+
+PROJECT_ROOT = SCRIPT_DIR.parent
+sys.path.append(str(PROJECT_ROOT))
 
 def main():
     print("🪓 Starting Domain Randomization Chunking (Daily)...")
-    OUTPUT_DIR = "/Users/zone/Documents/Project/TradingBot/RL/data/processed/chunks"
+    OUTPUT_DIR = PROJECT_ROOT / "data" / "processed" / "chunks"
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     
     regimes = ["sideway", "trend", "toxic"]
     
     for regime in regimes:
-        INPUT_FILE = f"/Users/zone/Documents/Project/TradingBot/RL/data/processed/BTCUSDT_features_{regime}.parquet"
+        INPUT_FILE = PROJECT_ROOT / "data" / "processed" / f"BTCUSDT_features_{regime}.parquet"
         
         if not os.path.exists(INPUT_FILE):
             print(f"⚠️ ข้าม {regime} - ไม่พบไฟล์ {INPUT_FILE}")

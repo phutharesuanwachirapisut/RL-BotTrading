@@ -1,1 +1,7 @@
 data/
+# Environments
+.env
+
+# Python
+__pycache__/
+*.pyc

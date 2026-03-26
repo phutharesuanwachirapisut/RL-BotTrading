@@ -11,6 +11,22 @@ import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.simulator.market_env import BinanceMarketMakerEnv
 
+
+from dotenv import load_dotenv
+
+from pathlib import Path
+
+# Replace the SCRIPT_DIR logic with this:
+try:
+    SCRIPT_DIR = Path(__file__).resolve().parent
+except NameError:
+    # This runs if __file__ isn't defined (Notebook/REPL)
+    SCRIPT_DIR = Path(os.getcwd())
+
+PROJECT_ROOT = SCRIPT_DIR.parent
+sys.path.append(str(PROJECT_ROOT))
+
+
 def load_config(yaml_path: str) -> dict:
     """Load configuration from a YAML file."""
     with open(yaml_path, 'r') as file:
@@ -31,7 +47,7 @@ def main():
     # ---------------------------------------------------------
     # ⚙️ 1. Load Configurations from YAML
     # ---------------------------------------------------------
-    config_path = "/Users/zone/Documents/Project/TradingBot/RL/configs/hyperparameters.yaml"
+    config_path = PROJECT_ROOT / "configs" / "hyperparameters.yaml"
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"Missing config file at {config_path}")
         
@@ -41,7 +57,7 @@ def main():
     print("✅ Loaded hyperparameters from YAML")
 
     # 2. Data Preparation
-    DATA_PATH = "/Users/zone/Documents/Project/TradingBot/RL/data/processed/BTCUSDT_features.parquet"
+    DATA_PATH = PROJECT_ROOT / "data" / "processed" / "BTCUSDT_features.parquet"
     np_data = load_data_to_numpy(DATA_PATH)
     
     split_idx = int(len(np_data) * 0.8)

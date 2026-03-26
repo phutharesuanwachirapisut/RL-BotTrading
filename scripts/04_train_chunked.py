@@ -4,12 +4,24 @@ import glob
 import random
 import polars as pl
 import numpy as np
-import yaml # ⭐️ เพิ่ม import yaml
+import yaml
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
 # เพิ่ม Path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.simulator.market_env import BinanceMarketMakerEnv
+
+from dotenv import load_dotenv
+from pathlib import Path
+
+try:
+    SCRIPT_DIR = Path(__file__).resolve().parent
+except NameError:
+    # This runs if __file__ isn't defined (Notebook/REPL)
+    SCRIPT_DIR = Path(os.getcwd())
+
+PROJECT_ROOT = SCRIPT_DIR.parent
+sys.path.append(str(PROJECT_ROOT))
 
 def load_chunk_to_numpy(parquet_path: str) -> np.ndarray:
     df = pl.read_parquet(parquet_path)
@@ -31,21 +43,21 @@ def load_config(yaml_path: str) -> dict:
 def main():
     print("🚀 Starting Chunked Training Pipeline...")
     
-    CONFIG_PATH = "/Users/zone/Documents/Project/TradingBot/RL/configs/hyperparameters.yaml"
+    CONFIG_PATH = PROJECT_ROOT / "configs" / "hyperparameters.yaml"
     full_config = load_config(CONFIG_PATH)
     env_config = full_config['env'] 
     
-    CHUNK_DIR = "/Users/zone/Documents/Project/TradingBot/RL/data/processed/chunks/"
+    CHUNK_DIR = PROJECT_ROOT / "data" / "processed" / "chunks"
     chunk_files = glob.glob(os.path.join(CHUNK_DIR, "*.parquet"))
     
     if not chunk_files:
         raise FileNotFoundError(f"❌ ไม่พบไฟล์ Chunk ใน {CHUNK_DIR}")
 
-    MODEL_SAVE_PATH = "/Users/zone/Documents/Project/TradingBot/RL/models/ppo_hft_chunked"
+    MODEL_SAVE_PATH = PROJECT_ROOT / "models" / "ppo_hft_chunked"
     save_dir = os.path.dirname(MODEL_SAVE_PATH)
     os.makedirs(save_dir, exist_ok=True)
     
-    TENSORBOARD_LOG = "/Users/zone/Documents/Project/TradingBot/RL/logs/tensorboard/" # ⭐️ ที่เก็บกราฟ
+    TENSORBOARD_LOG = PROJECT_ROOT / "logs" / "tensorboard/" # ⭐️ ที่เก็บกราฟ
     TOTAL_EPOCHS = 10 
     model = None 
 

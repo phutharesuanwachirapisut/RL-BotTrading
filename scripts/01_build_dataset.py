@@ -7,6 +7,23 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.data_pipeline.binance_parser import process_raw_trades_to_parquet
 from src.data_pipeline.features import generate_rl_state_features, calculate_vpin_and_merge
 
+
+from dotenv import load_dotenv
+
+from pathlib import Path
+
+# Replace the SCRIPT_DIR logic with this:
+try:
+    SCRIPT_DIR = Path(__file__).resolve().parent
+except NameError:
+    # This runs if __file__ isn't defined (Notebook/REPL)
+    SCRIPT_DIR = Path(os.getcwd())
+
+PROJECT_ROOT = SCRIPT_DIR.parent
+sys.path.append(str(PROJECT_ROOT))
+
+
+
 def process_pipeline(regime_name, raw_csv, tick_parquet, feature_parquet):
     """
     ฟังก์ชันแกนหลัก: อ่าน CSV -> แปลงเป็น Tick Parquet -> สร้าง Features (VPIN/TFI)
@@ -57,9 +74,9 @@ if __name__ == "__main__":
         print(f"{'='*50}")
         
         # ⭐️ เปลี่ยนชื่อไฟล์เป้าหมายให้มีคำว่า sideway/trend/toxic ต่อท้าย (จะได้ไม่ทับกัน)
-        RAW_CSV_PATH = f"/Users/zone/Documents/Project/TradingBot/RL/data/raw/BTCUSDT_{regime}.csv"
-        TICK_PARQUET_PATH = f"/Users/zone/Documents/Project/TradingBot/RL/data/processed/BTCUSDT_tick_{regime}.parquet"
-        FEATURE_PARQUET_PATH = f"/Users/zone/Documents/Project/TradingBot/RL/data/processed/BTCUSDT_features_{regime}.parquet"
+        RAW_CSV_PATH = PROJECT_ROOT / "data" / "raw" / f"BTCUSDT_{regime}.csv"
+        TICK_PARQUET_PATH = PROJECT_ROOT / "data" / "processed" / f"BTCUSDT_tick_{regime}.parquet"
+        FEATURE_PARQUET_PATH = PROJECT_ROOT / "data" / "processed" / f"BTCUSDT_features_{regime}.parquet"
         
         # โยนเข้าเตาอบทีละไฟล์
         process_pipeline(

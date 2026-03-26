@@ -11,6 +11,23 @@ import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.simulator.market_env import BinanceMarketMakerEnv
 
+
+from dotenv import load_dotenv
+
+from pathlib import Path
+import sys
+
+# Replace the SCRIPT_DIR logic with this:
+try:
+    SCRIPT_DIR = Path(__file__).resolve().parent
+except NameError:
+    # This runs if __file__ isn't defined (Notebook/REPL)
+    SCRIPT_DIR = Path(os.getcwd())
+
+PROJECT_ROOT = SCRIPT_DIR.parent
+sys.path.append(str(PROJECT_ROOT))
+
+
 def load_eval_data(parquet_path: str) -> np.ndarray:
     """โหลดข้อมูลและตัดมาเฉพาะ 20% สุดท้าย (Out-of-sample)"""
     print(f"📥 Loading Parquet: {os.path.basename(parquet_path)}")
@@ -33,7 +50,7 @@ def load_config(yaml_path: str) -> dict:
 
 def run_backtest_for_regime(regime: str, model, env_config: dict, device) -> dict:
     # ... (โค้ดข้างในฟังก์ชันนี้เหมือนเดิมทุกประการ) ...
-    DATA_PATH = f"/Users/zone/Documents/Project/TradingBot/RL/data/processed/BTCUSDT_features_{regime}.parquet"
+    DATA_PATH = PROJECT_ROOT / "data" / "processed" / f"BTCUSDT_features_{regime}.parquet"
     
     if not os.path.exists(DATA_PATH):
         print(f"⚠️ ข้าม {regime.upper()} - ไม่พบไฟล์ข้อมูล")
@@ -70,12 +87,12 @@ def run_backtest_for_regime(regime: str, model, env_config: dict, device) -> dic
 
 def main():
     # ⭐️ 1. ดึง Config จาก YAML โดยตรง
-    CONFIG_PATH = "/Users/zone/Documents/Project/TradingBot/RL/configs/hyperparameters.yaml"
+    CONFIG_PATH = PROJECT_ROOT / "configs" / "hyperparameters.yaml"
     full_config = load_config(CONFIG_PATH)
     env_config = full_config['env']
     print(f"⚙️ Loaded Env Config from YAML: {env_config}")
 
-    MODEL_PATH = "/Users/zone/Documents/Project/TradingBot/RL/models/ppo_hft_chunked_final.zip"
+    MODEL_PATH = PROJECT_ROOT / "models" / "ppo_hft_chunked_final.zip"
     if not os.path.exists(MODEL_PATH):
         print(f"❌ Error: ไม่พบไฟล์โมเดลที่ {MODEL_PATH}")
         return
@@ -157,7 +174,7 @@ def main():
         ax3.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    save_path = '/Users/zone/Documents/Project/TradingBot/RL/notebooks/backtest_dashboard_all.png'
+    save_path = PROJECT_ROOT / "notebooks" / "backtest_dashboard_all.png"
     plt.savefig(save_path, dpi=300)
     print(f"🎉 Dashboard Saved Successfully at: {save_path}")
     plt.show()
