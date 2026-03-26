@@ -11,7 +11,7 @@
 * **All-in-One Orchestrator:** ควบคุมทุกขั้นตอน (Data -> Train -> Backtest -> Live) ผ่านไฟล์เดียว
 * **Adaptive AS-PPO Strategy:** ใช้ AI ปรับค่า Spread และ Skew ตามความผันผวน (Volatility) และความเป็นพิษของ Order Flow (VPIN)
 * **Advanced Real-time Dashboard:** แสดงผล Orderbook L2, Inventory Risk, Latency History และกำไรสุทธิหักค่าธรรมเนียมจริง (Maker/Taker Fees)
-* **Safety First:** ระบบ **Kill Switch** พร้อมรหัส PIN 4 หลัก เพื่อล้างพอร์ตและยกเลิกออเดอร์ทั้งหมดทันที
+* **Safety First:** ระบบ **Kill Switch** พร้อมรหัส PIN 4 หลัก (ป้องกันการกดผิด) เพื่อล้างพอร์ตและยกเลิกออเดอร์ทั้งหมดทันที (รหัส 1234)
 * **Resource Optimized:** ออกแบบมาเพื่อรันบน Apple Silicon (M3) โดยใช้ `Polars` และ `PyTorch MPS`
 
 ---
