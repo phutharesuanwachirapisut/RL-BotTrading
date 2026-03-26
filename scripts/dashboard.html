@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HFT Quant Elite Dashboard</title>
+    <title>HFT Quant Elite Dashboard v3.2</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
@@ -15,159 +15,233 @@
         }
 
         .ob-row {
-            transition: all 0.2s ease;
+            transition: background 0.1s ease;
         }
 
         .ob-row:hover {
-            background: rgba(255, 255, 255, 0.05);
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .trade-scroll::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .trade-scroll::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 4px;
         }
     </style>
 </head>
 
 <body class="bg-[#0b0f19] text-slate-300 p-4 h-screen overflow-hidden">
 
+    <div id="kill-modal" class="fixed inset-0 bg-black/80 hidden items-center justify-center z-50">
+        <div
+            class="bg-slate-900 border border-red-500 p-6 rounded-xl w-80 text-center shadow-[0_0_30px_rgba(239,68,68,0.3)]">
+            <h2 class="text-red-500 font-bold text-xl mb-2">⚠ EMERGENCY FLATTEN ⚠</h2>
+            <p class="text-xs text-slate-400 mb-4">Enter 4-digit PIN to cancel all orders and close positions.</p>
+            <input type="password" id="pin-input"
+                class="w-full bg-slate-800 border border-slate-700 rounded p-2 text-center text-xl tracking-[0.5em] text-white focus:outline-none focus:border-red-500 mb-4"
+                maxlength="4">
+            <div class="flex gap-2">
+                <button onclick="closeKillModal()"
+                    class="w-1/2 bg-slate-700 hover:bg-slate-600 p-2 rounded text-white font-bold transition">CANCEL</button>
+                <button onclick="executeKillSwitch()"
+                    class="w-1/2 bg-red-600 hover:bg-red-500 p-2 rounded text-white font-bold transition">FLATTEN</button>
+            </div>
+        </div>
+    </div>
+
     <div class="flex justify-between items-center mb-4 border-b border-slate-800 pb-2">
-        <h1 class="text-xl font-bold text-blue-500 flex items-center gap-2">
-            <span class="relative flex h-3 w-3">
-                <span
-                    class="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-                <span class="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span>
-            </span>
-            HFT MARKET MAKER <span class="text-slate-500 text-xs font-normal">v3.0 LIVE</span>
-        </h1>
-        <div id="connection-status" class="text-xs text-green-500">System Online</div>
+        <div class="flex items-center gap-4">
+            <h1 class="text-xl font-bold text-blue-500 flex items-center gap-2">
+                <span class="relative flex h-3 w-3">
+                    <span
+                        class="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                    <span class="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span>
+                </span>
+                HFT MARKET MAKER <span class="text-slate-500 text-xs font-normal">v3.2 LIVE</span>
+            </h1>
+            <button onclick="openKillModal()"
+                class="bg-red-500/10 border border-red-500 text-red-500 hover:bg-red-500 hover:text-white px-3 py-1 rounded text-xs font-bold transition flex items-center gap-2">
+                🛑 KILL SWITCH
+            </button>
+        </div>
+        <div class="flex items-center gap-6">
+            <div
+                class="flex gap-4 text-xs font-mono text-slate-500 bg-slate-800/50 px-3 py-1 rounded border border-slate-700">
+                <div>Ping: <span id="ping-metric" class="text-slate-300 font-bold">--</span> ms</div>
+                <div>T2T: <span id="t2t-metric" class="text-slate-300 font-bold">--</span> ms</div>
+            </div>
+            <div id="connection-status" class="text-xs text-green-500 font-bold">System Online</div>
+        </div>
     </div>
 
     <div class="flex gap-4 h-[calc(100vh-100px)]">
-        <div class="w-1/4 bg-[#151c2c] rounded-xl border border-slate-800 flex flex-col shadow-2xl overflow-hidden">
+        <div class="w-1/4 flex flex-col gap-3">
             <div
-                class="p-3 bg-slate-800/30 border-b border-slate-700/50 flex justify-between text-[10px] uppercase tracking-wider font-bold">
-                <span class="w-1/3">Price (USDT)</span>
-                <span class="w-1/3 text-right pr-4">Size (BTC)</span>
-                <span class="w-1/3 text-right">Total</span>
+                class="h-[150px] bg-[#151c2c] rounded-xl border border-slate-800 shadow-2xl flex flex-col overflow-hidden">
+                <div
+                    class="p-2 bg-slate-800/30 border-b border-slate-700/50 text-[10px] uppercase font-bold text-slate-400">
+                    Recent Fills</div>
+                <div id="trade-feed"
+                    class="flex-1 overflow-y-auto trade-scroll p-2 flex flex-col gap-1 text-[11px] font-mono"></div>
             </div>
-            <div class="flex-1 overflow-hidden flex flex-col px-3 py-2">
-                <div id="ob-asks" class="flex flex-col-reverse justify-end h-[42%] space-y-[2px]"></div>
-                <div class="my-3 py-3 text-center border-y border-slate-700/50 bg-slate-900/40 rounded-lg">
-                    <div id="ob-mid" class="text-2xl font-bold text-white leading-none">---</div>
-                    <div class="text-[10px] text-slate-500 mt-1 uppercase">Market Mid Price</div>
+            <div
+                class="flex-1 bg-[#151c2c] rounded-xl border border-slate-800 flex flex-col shadow-2xl overflow-hidden">
+                <div class="p-2 border-b border-slate-700/50 flex justify-between items-center bg-slate-800/30">
+                    <span class="text-[10px] uppercase font-bold text-slate-400">Orderbook L2</span>
+                    <span class="text-[10px] text-slate-500">Imbalance: <span id="obi-ratio"
+                            class="font-bold">--</span></span>
                 </div>
-                <div id="ob-bids" class="flex flex-col h-[42%] space-y-[2px]"></div>
+                <div class="flex text-[10px] uppercase tracking-wider font-bold p-2 pb-1 text-slate-500">
+                    <span class="w-1/3">Price</span><span class="w-1/3 text-right">Size</span><span
+                        class="w-1/3 text-right">Total</span>
+                </div>
+                <div class="flex-1 overflow-hidden flex flex-col px-2 py-1">
+                    <div id="ob-asks" class="flex-1 flex flex-col-reverse justify-end overflow-hidden"></div>
+                    <div
+                        class="my-1 py-1 text-center border-y border-slate-700/50 bg-slate-900/40 rounded shadow-inner">
+                        <div id="ob-mid" class="text-xl font-bold text-white leading-none">---</div>
+                    </div>
+                    <div id="ob-bids" class="flex-1 flex flex-col overflow-hidden"></div>
+                </div>
             </div>
         </div>
 
         <div class="w-3/4 flex flex-col gap-4 overflow-y-auto pr-1">
-            <div class="grid grid-cols-4 gap-3">
-                <div class="bg-[#151c2c] p-4 rounded-xl border border-slate-800 shadow-sm">
+            <div class="grid grid-cols-5 gap-3">
+                <div class="bg-[#151c2c] p-4 rounded-xl border border-slate-800 shadow-sm transition-all" id="inv-card">
                     <p class="text-slate-500 text-[10px] uppercase font-bold mb-1">Inventory</p>
                     <p class="text-2xl font-bold text-white" id="inventory">---</p>
                     <p class="text-[10px] text-slate-600 mt-1">MAX: <span id="max_inv">---</span></p>
                 </div>
                 <div class="bg-[#151c2c] p-4 rounded-xl border border-slate-800 shadow-sm">
-                    <p class="text-slate-500 text-[10px] uppercase font-bold mb-1">Position Cost</p>
-                    <p class="text-2xl font-bold text-blue-400" id="pos_cost">---</p>
-                    <p class="text-[10px] text-slate-600 mt-1">USD VALUE</p>
+                    <p class="text-slate-500 text-[10px] uppercase font-bold mb-1">Net PnL (USDT)</p>
+                    <div class="flex items-baseline gap-2">
+                        <p class="text-2xl font-bold" id="pnl">---</p>
+                        <span class="text-xs font-bold" id="roc_pct">(--%)</span>
+                    </div>
+                    <p class="text-[10px] text-slate-600 mt-1">
+                        GROSS: <span id="gross_pnl" class="font-bold text-slate-300">---</span> |
+                        FEE: <span id="est_fees" class="font-bold text-red-400">---</span>
+                    </p>
+                </div>
+                <div class="bg-[#151c2c] p-4 rounded-xl border border-slate-800 shadow-sm transition-all"
+                    id="vpin-card">
+                    <p class="text-slate-500 text-[10px] uppercase font-bold mb-1">Toxicity (VPIN)</p>
+                    <p class="text-2xl font-bold text-white" id="vpin-val">---</p>
+                    <p class="text-[10px] text-slate-600 mt-1">THRESHOLD: 0.8</p>
                 </div>
                 <div class="bg-[#151c2c] p-4 rounded-xl border border-slate-800 shadow-sm">
-                    <p class="text-slate-500 text-[10px] uppercase font-bold mb-1">Return (ROE)</p>
-                    <p class="text-2xl font-bold" id="pnl_pct">---</p>
-                    <p class="text-[10px] text-slate-600 mt-1">PERCENTAGE</p>
+                    <p class="text-slate-500 text-[10px] uppercase font-bold mb-1">Quote Win Rate</p>
+                    <p class="text-2xl font-bold text-blue-400" id="win-rate">---%</p>
+                    <p class="text-[10px] text-slate-600 mt-1">FILLS / QUOTES</p>
                 </div>
-                <div class="bg-[#151c2c] p-4 rounded-xl border border-slate-800 shadow-sm relative">
-                    <p class="text-slate-500 text-[10px] uppercase font-bold mb-1">Net PnL (After Fees)</p>
-                    <p class="text-2xl font-bold" id="pnl">---</p>
-                    <div class="flex justify-between items-center mt-2 pt-2 border-t border-slate-700/50">
-                        <p class="text-[10px] text-slate-500">GROSS: <span id="gross_pnl"
-                                class="text-slate-300">---</span></p>
-                        <p class="text-[10px] text-red-400 font-bold">FEE: <span id="est_fees">---</span></p>
-                    </div>
+                <div class="bg-[#151c2c] p-4 rounded-xl border border-slate-800 shadow-sm">
+                    <p class="text-slate-500 text-[10px] uppercase font-bold mb-1" id="lbl-vol">24h Vol (---)</p>
+                    <p class="text-2xl font-bold text-purple-400" id="vol-24h">---</p>
+                    <p class="text-[10px] text-slate-600 mt-1">TRADED VOLUME</p>
                 </div>
             </div>
 
             <div
-                class="bg-[#151c2c] p-5 rounded-xl border border-slate-800 shadow-inner flex justify-between items-center relative overflow-hidden">
+                class="bg-[#151c2c] p-4 rounded-xl border border-slate-800 shadow-inner flex justify-between items-center relative overflow-hidden">
                 <div class="absolute inset-0 bg-blue-500/5 pointer-events-none"></div>
-                <div class="text-center w-1/3">
-                    <p class="text-slate-500 text-[10px] uppercase font-bold mb-2">My Bid (Buy)</p>
-                    <p class="text-4xl font-bold text-green-500 tracking-tighter" id="bid_price">---</p>
+                <div class="text-center w-1/3 z-10">
+                    <p class="text-slate-500 text-[10px] uppercase font-bold mb-1">My Bid</p>
+                    <p class="text-3xl font-bold text-green-500 tracking-tighter" id="bid_price">---</p>
+                    <p class="text-[10px] text-slate-400 mt-1 font-mono">BBA Dist: <span id="bid_dist"
+                            class="font-bold">---</span></p>
                 </div>
-                <div class="text-center w-1/3 border-x border-slate-800/50 px-4">
-                    <div class="flex justify-center gap-4 mb-2">
-                        <div class="text-[10px] text-slate-500">SKEW: <span id="skew_val"
-                                class="text-purple-400">---</span></div>
-                        <div class="text-[10px] text-slate-500">VOLA: <span id="volatility"
-                                class="text-yellow-500">---</span></div>
-                    </div>
-                    <div class="bg-slate-900/80 py-1 px-3 rounded text-xs font-bold text-slate-400" id="action">---
-                    </div>
+
+                <div class="text-center w-1/3 border-x border-slate-800/50 px-4 z-10">
+                    <div class="text-[12px] text-slate-500 mb-1">SKEW: <span id="skew_val"
+                            class="text-purple-400">---</span></div>
+                    <div class="bg-slate-900 py-1 px-3 rounded text-[12px] font-bold text-slate-400 border border-slate-700/50"
+                        id="action">---</div>
                 </div>
-                <div class="text-center w-1/3">
-                    <p class="text-slate-500 text-[10px] uppercase font-bold mb-2">My Ask (Sell)</p>
-                    <p class="text-4xl font-bold text-red-500 tracking-tighter" id="ask_price">---</p>
+
+                <div class="text-center w-1/3 z-10">
+                    <p class="text-slate-500 text-[10px] uppercase font-bold mb-1">My Ask</p>
+                    <p class="text-3xl font-bold text-red-500 tracking-tighter" id="ask_price">---</p>
+                    <p class="text-[10px] text-slate-400 mt-1 font-mono">BBA Dist: <span id="ask_dist"
+                            class="font-bold">---</span></p>
                 </div>
             </div>
 
-            <div class="grid grid-cols-2 gap-4 flex-1 min-h-[450px]">
-                <div class="bg-[#151c2c] p-4 rounded-xl border border-slate-800 h-full"><canvas id="chartPnL"></canvas>
+            <div class="grid grid-cols-2 grid-rows-2 gap-4 flex-1 min-h-[450px]">
+                <div class="bg-[#151c2c] p-3 rounded-xl border border-slate-800 flex flex-col relative">
+                    <span class="absolute top-2 left-3 text-[10px] uppercase font-bold text-slate-400 z-10"
+                        id="lbl-pnl-chart">Net PNL vs --- Price</span>
+                    <div class="flex-1 mt-4 relative"><canvas id="chartPnLPrice"></canvas></div>
                 </div>
-                <div class="bg-[#151c2c] p-4 rounded-xl border border-slate-800 h-full"><canvas id="chartTox"></canvas>
+                <div class="bg-[#151c2c] p-3 rounded-xl border border-slate-800 flex flex-col relative">
+                    <span class="absolute top-2 left-3 text-[10px] uppercase font-bold text-slate-400 z-10">Inventory vs
+                        Toxicity (VPIN)</span>
+                    <div class="flex-1 mt-4 relative"><canvas id="chartInvTox"></canvas></div>
                 </div>
-                <div class="bg-[#151c2c] p-4 rounded-xl border border-slate-800 h-full"><canvas
-                        id="chartQuote"></canvas></div>
-                <div class="bg-[#151c2c] p-4 rounded-xl border border-slate-800 h-full"><canvas id="chartInv"></canvas>
+                <div class="bg-[#151c2c] p-3 rounded-xl border border-slate-800 flex flex-col relative">
+                    <span class="absolute top-2 left-3 text-[10px] uppercase font-bold text-slate-400 z-10">T2T Latency
+                        History (ms)</span>
+                    <div class="flex-1 mt-4 relative"><canvas id="chartLatency"></canvas></div>
+                </div>
+                <div class="bg-[#151c2c] p-3 rounded-xl border border-slate-800 flex flex-col relative">
+                    <span class="absolute top-2 left-3 text-[10px] uppercase font-bold text-slate-400 z-10">My Spread &
+                        Skew vs Volatility</span>
+                    <div class="flex-1 mt-4 relative"><canvas id="chartSpreadVol"></canvas></div>
                 </div>
             </div>
         </div>
     </div>
 
     <script>
-        const maxPoints = 60;
-        const chartDefaults = {
-            responsive: true, maintainAspectRatio: false, animation: false,
-            scales: { x: { display: false }, y: { grid: { color: '#1e293b' }, ticks: { color: '#64748b', font: { size: 10 } } } },
-            plugins: { legend: { position: 'top', align: 'end', labels: { color: '#94a3b8', boxWidth: 10, font: { size: 10, weight: 'bold' } } } }
-        };
+        // Kill Switch Modal
+        function openKillModal() { document.getElementById('kill-modal').classList.remove('hidden'); document.getElementById('kill-modal').classList.add('flex'); document.getElementById('pin-input').focus(); }
+        function closeKillModal() { document.getElementById('kill-modal').classList.add('hidden'); document.getElementById('kill-modal').classList.remove('flex'); document.getElementById('pin-input').value = ''; }
+        function executeKillSwitch() {
+            const pin = document.getElementById('pin-input').value;
+            ws.send(JSON.stringify({ action: "kill_switch", pin: pin }));
+            closeKillModal();
+        }
 
-        const ctxPnL = document.getElementById('chartPnL').getContext('2d');
-        const chartPnL = new Chart(ctxPnL, {
-            type: 'line',
-            data: {
-                labels: [], datasets: [
-                    { label: 'NET PNL', data: [], borderColor: '#10b981', borderWidth: 2, pointRadius: 0, yAxisID: 'y' },
-                    { label: 'BTC PRICE', data: [], borderColor: '#475569', borderWidth: 1, borderDash: [5, 5], pointRadius: 0, yAxisID: 'y1' }
-                ]
-            },
-            options: { ...chartDefaults, scales: { ...chartDefaults.scales, y1: { position: 'right', grid: { drawOnChartArea: false } } } }
-        });
+        // ⭐️ 4 Charts Configuration
+        const maxPts = 60;
+        const fontConfig = { color: '#64748b', font: { size: 9 } };
+        const commonOptions = { responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { display: true, position: 'top', align: 'end', labels: { color: '#94a3b8', boxWidth: 8, font: { size: 9 } } } }, scales: { x: { display: false } } };
 
-        const chartTox = new Chart(document.getElementById('chartTox'), {
-            type: 'line',
-            data: { labels: [], datasets: [{ label: 'TRADE IMBALANCE', data: [], borderColor: '#3b82f6', borderWidth: 2, pointRadius: 0 }, { label: 'TOXICITY (VPIN)', data: [], borderColor: '#ef4444', borderWidth: 1, fill: true, backgroundColor: 'rgba(239, 68, 68, 0.1)', pointRadius: 0 }] },
-            options: chartDefaults
-        });
+        // Dual Y-Axis Options
+        const dualOpts = JSON.parse(JSON.stringify(commonOptions));
+        dualOpts.scales.y = { type: 'linear', display: true, position: 'left', grid: { color: '#1e293b' }, ticks: fontConfig };
+        dualOpts.scales.y1 = { type: 'linear', display: true, position: 'right', grid: { drawOnChartArea: false }, ticks: fontConfig };
 
-        const chartQuote = new Chart(document.getElementById('chartQuote'), {
-            type: 'line',
-            data: { labels: [], datasets: [{ label: 'SPREAD USD', data: [], borderColor: '#a855f7', borderWidth: 2, pointRadius: 0 }, { label: 'SKEW ADJ', data: [], borderColor: '#f59e0b', borderWidth: 2, pointRadius: 0 }] },
-            options: chartDefaults
-        });
+        // Single Y-Axis Options
+        const singleOpts = JSON.parse(JSON.stringify(commonOptions));
+        singleOpts.scales.y = { type: 'linear', display: true, position: 'left', grid: { color: '#1e293b' }, ticks: fontConfig };
 
-        const chartInv = new Chart(document.getElementById('chartInv'), {
-            type: 'line',
-            data: { labels: [], datasets: [{ label: 'NET INVENTORY', data: [], borderColor: '#3b82f6', borderWidth: 2, fill: true, backgroundColor: 'rgba(59, 130, 246, 0.1)', pointRadius: 0 }] },
-            options: chartDefaults
-        });
+        // 1. PNL vs Price
+        const chartPnLPrice = new Chart(document.getElementById('chartPnLPrice').getContext('2d'), { type: 'line', data: { labels: [], datasets: [{ label: 'NET PNL', data: [], borderColor: '#10b981', borderWidth: 2, pointRadius: 0, yAxisID: 'y' }, { label: 'MID PRICE', data: [], borderColor: '#94a3b8', borderDash: [3, 3], borderWidth: 1, pointRadius: 0, yAxisID: 'y1' }] }, options: dualOpts });
 
-        function updateChart(chart, label, values) {
+        // 2. Inventory vs VPIN
+        const chartInvTox = new Chart(document.getElementById('chartInvTox').getContext('2d'), { type: 'line', data: { labels: [], datasets: [{ label: 'INVENTORY', data: [], borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.1)', fill: true, borderWidth: 1.5, pointRadius: 0, stepper: true, yAxisID: 'y' }, { label: 'VPIN', data: [], borderColor: '#ef4444', borderWidth: 1.5, pointRadius: 0, yAxisID: 'y1' }] }, options: dualOpts });
+
+        // 3. Latency
+        const chartLatency = new Chart(document.getElementById('chartLatency').getContext('2d'), { type: 'line', data: { labels: [], datasets: [{ label: 'T2T LATENCY (ms)', data: [], borderColor: '#f59e0b', backgroundColor: 'rgba(245, 158, 11, 0.1)', fill: true, borderWidth: 1.5, pointRadius: 0 }] }, options: singleOpts });
+
+        // 4. Spread/Skew vs Volatility
+        const chartSpreadVol = new Chart(document.getElementById('chartSpreadVol').getContext('2d'), { type: 'line', data: { labels: [], datasets: [{ label: 'SPREAD', data: [], borderColor: '#8b5cf6', borderWidth: 1.5, pointRadius: 0, yAxisID: 'y' }, { label: 'SKEW', data: [], borderColor: '#ec4899', borderWidth: 1.5, pointRadius: 0, yAxisID: 'y' }, { label: 'VOLA 60s', data: [], borderColor: '#cbd5e1', borderDash: [2, 2], borderWidth: 1, pointRadius: 0, yAxisID: 'y1' }] }, options: dualOpts });
+
+        function updateMultiChart(chart, label, dataArr) {
             chart.data.labels.push(label);
-            chart.data.datasets.forEach((ds, i) => ds.data.push(values[i]));
-            if (chart.data.labels.length > maxPoints) {
+            dataArr.forEach((val, i) => chart.data.datasets[i].data.push(val));
+            if (chart.data.labels.length > maxPts) {
                 chart.data.labels.shift();
                 chart.data.datasets.forEach(ds => ds.data.shift());
             }
             chart.update();
         }
 
+        // WS Connection
         const ws = new WebSocket(`ws://${window.location.host}/ws`);
         let tick = 0;
 
@@ -175,76 +249,100 @@
             const d = JSON.parse(e.data);
             tick++;
 
-            // ⭐️ FIX: อัปเดตข้อมูล Card แค่ครั้งเดียว เพื่อป้องกัน SyntaxError
-            document.getElementById("inventory").innerText = d.inventory.toFixed(4);
-            if (d.max_inventory !== undefined) document.getElementById("max_inv").innerText = d.max_inventory.toFixed(4);
-            document.getElementById("pos_cost").innerText = "$" + d.pos_cost.toFixed(2);
-            document.getElementById("volatility").innerText = d.volatility.toFixed(5);
-            document.getElementById("skew_val").innerText = d.skew.toFixed(2);
+            // ⭐️ อัปเดตชื่อเหรียญให้เป็น Dynamic
+            if (d.symbol && d.symbol !== "--") {
+                document.getElementById("lbl-vol").innerText = `24h Vol (${d.symbol})`;
+                document.getElementById("lbl-pnl-chart").innerText = `Net PNL vs ${d.symbol} Price`;
+            }
+
+            // Metrics
+            document.getElementById("ping-metric").innerText = d.latency_ping || "--";
+            document.getElementById("t2t-metric").innerText = d.latency_t2t ? d.latency_t2t.toFixed(1) : "--";
+            document.getElementById("win-rate").innerText = d.quote_win_rate ? d.quote_win_rate.toFixed(1) + "%" : "0.0%";
+            document.getElementById("vol-24h").innerText = d.volume_24h ? d.volume_24h.toFixed(3) : "0.000";
+
+            // Risk Alerts
+            const invEl = document.getElementById("inventory"), invCard = document.getElementById("inv-card");
+            invEl.innerText = d.inventory.toFixed(4);
+            if (Math.abs(d.inventory) >= d.max_inventory * 0.9) { invCard.classList.add("border-red-500", "shadow-[0_0_15px_rgba(239,68,68,0.2)]"); invEl.classList.add("text-red-500", "animate-pulse"); } else { invCard.classList.remove("border-red-500", "shadow-[0_0_15px_rgba(239,68,68,0.2)]"); invEl.classList.remove("text-red-500", "animate-pulse"); }
+
+            const vpinEl = document.getElementById("vpin-val"), vpinCard = document.getElementById("vpin-card");
+            vpinEl.innerText = d.vpin.toFixed(4);
+            if (d.vpin >= 0.8) { vpinCard.classList.add("border-orange-500"); vpinEl.classList.add("text-orange-500", "animate-pulse"); } else { vpinCard.classList.remove("border-orange-500"); vpinEl.classList.remove("text-orange-500", "animate-pulse"); }
+
+            // PNL & Fees & ROC
+            document.getElementById("max_inv").innerText = d.max_inventory.toFixed(4);
+            document.getElementById("pnl").innerText = (d.pnl > 0 ? "+" : "") + d.pnl.toFixed(2);
+            document.getElementById("pnl").className = `text-2xl font-bold ${d.pnl >= 0 ? 'text-green-500' : 'text-red-500'}`;
+
+            // ⭐️ ผูกค่า ROC %
+            const rocEl = document.getElementById("roc_pct");
+            rocEl.innerText = `(${(d.roc_pct > 0 ? "+" : "") + d.roc_pct.toFixed(2)}%)`;
+            rocEl.className = `text-xs font-bold ${d.roc_pct >= 0 ? 'text-green-500' : 'text-red-500'}`;
+
+            document.getElementById("gross_pnl").innerText = (d.gross_pnl > 0 ? "+" : "") + d.gross_pnl.toFixed(2);
+            document.getElementById("est_fees").innerText = "$" + d.est_fees.toFixed(3);
+
+            // Quotes & Distance
             document.getElementById("bid_price").innerText = d.bid.toFixed(2);
             document.getElementById("ask_price").innerText = d.ask.toFixed(2);
-            document.getElementById("action").innerText = `STRATEGY: [SPREAD ${d.action[0].toFixed(2)}, SKEW ${d.action[1].toFixed(2)}]`;
 
-            // PnL Formatting
-            const pnlVal = d.pnl.toFixed(2);
-            const pnlPct = d.pnl_pct.toFixed(2) + "%";
-            document.getElementById("pnl").innerText = (d.pnl > 0 ? "+" : "") + pnlVal;
-            document.getElementById("pnl_pct").innerText = (d.pnl_pct > 0 ? "+" : "") + pnlPct;
-            document.getElementById("pnl").className = `text-2xl font-bold tracking-tight ${d.pnl >= 0 ? 'text-green-500' : 'text-red-500'}`;
-            document.getElementById("pnl_pct").className = `text-2xl font-bold ${d.pnl_pct >= 0 ? 'text-green-500' : 'text-red-500'}`;
+            // ⭐️ ผูกค่า Distance to BBA (ถ้าเครื่องหมายติดลบแปลว่าอยู่ไกลจากตลาด, ถ้าเป็นบวกคือเคาะข้ามสเปรด)
+            const bDistEl = document.getElementById("bid_dist");
+            bDistEl.innerText = (d.bid_dist > 0 ? "-" : "+") + Math.abs(d.bid_dist).toFixed(2);
+            bDistEl.className = `font-bold ${d.bid_dist > 0 ? 'text-slate-400' : 'text-orange-400'}`;
 
-            if (d.gross_pnl !== undefined) {
-                document.getElementById("gross_pnl").innerText = (d.gross_pnl > 0 ? "+" : "") + d.gross_pnl.toFixed(2);
-                document.getElementById("est_fees").innerText = "$" + d.est_fees.toFixed(3);
-            }
+            const aDistEl = document.getElementById("ask_dist");
+            aDistEl.innerText = (d.ask_dist > 0 ? "+" : "-") + Math.abs(d.ask_dist).toFixed(2);
+            aDistEl.className = `font-bold ${d.ask_dist > 0 ? 'text-slate-400' : 'text-orange-400'}`;
 
-            // Orderbook UI (20 Levels)
-            if (d.orderbook && d.orderbook.asks && d.orderbook.asks.length > 0) {
-                let currentAskTotal = 0;
-                const asksList = d.orderbook.asks.slice(0, 20).map(a => {
-                    const price = parseFloat(a[0]);
-                    const size = parseFloat(a[1]);
-                    currentAskTotal += size;
-                    return { price: price, size: size, total: currentAskTotal };
-                });
+            document.getElementById("skew_val").innerText = d.skew.toFixed(2);
+            document.getElementById("action").innerText = `[SP: ${d.action[0].toFixed(2)}, SK: ${d.action[1].toFixed(2)}]`;
 
-                const askH = asksList.reverse().map(a => `
-                    <div class="flex justify-between text-[13.5px] font-mono leading-none py-[2px] ob-row">
-                        <span class="text-red-500 font-bold w-1/3">${a.price.toFixed(2)}</span>
-                        <span class="text-slate-400 w-1/3 text-right pr-4">${a.size.toFixed(4)}</span>
-                        <span class="text-slate-500 w-1/3 text-right">${a.total.toFixed(4)}</span>
+            // Trade Feed
+            if (d.recent_trades && d.recent_trades.length > 0) {
+                document.getElementById('trade-feed').innerHTML = d.recent_trades.map(t => `
+                    <div class="flex justify-between items-center py-1 border-b border-slate-800/50">
+                        <span class="text-[9px] text-slate-500">${t.time}</span>
+                        <span class="${t.side === 'BUY' ? 'text-green-500' : 'text-red-500'} font-bold">${t.side}</span>
+                        <span class="text-slate-300">${t.price.toFixed(2)}</span>
+                        <span class="text-slate-400">${t.qty.toFixed(4)}</span>
                     </div>`).join('');
-                document.getElementById('ob-asks').innerHTML = askH;
-
-                let currentBidTotal = 0;
-                const bidH = d.orderbook.bids.slice(0, 20).map(b => {
-                    const price = parseFloat(b[0]);
-                    const size = parseFloat(b[1]);
-                    currentBidTotal += size;
-                    return `
-                    <div class="flex justify-between text-[13.5px] font-mono leading-none py-[2px] ob-row">
-                        <span class="text-green-500 font-bold w-1/3">${price.toFixed(2)}</span>
-                        <span class="text-slate-400 w-1/3 text-right pr-4">${size.toFixed(4)}</span>
-                        <span class="text-slate-500 w-1/3 text-right">${currentBidTotal.toFixed(4)}</span>
-                    </div>`;
-                }).join('');
-                document.getElementById('ob-bids').innerHTML = bidH;
-
-                const midEl = document.getElementById('ob-mid');
-                midEl.innerText = d.mid_price.toFixed(2);
-                midEl.className = `text-2xl font-bold leading-none ${d.tfi > 0 ? 'text-green-500' : d.tfi < 0 ? 'text-red-500' : 'text-white'}`;
             }
 
-            // Charts Update
-            updateChart(chartPnL, tick, [d.pnl, d.mid_price]);
-            updateChart(chartTox, tick, [d.tfi, d.vpin]);
-            updateChart(chartQuote, tick, [d.spread, d.skew]);
-            updateChart(chartInv, tick, [d.inventory]);
+            // Orderbook UI
+            if (d.orderbook && d.orderbook.asks && d.orderbook.asks.length > 0) {
+                const topN = 15; const asks = d.orderbook.asks.slice(0, topN); const bids = d.orderbook.bids.slice(0, topN);
+                const maxVol = Math.max(...asks.map(a => parseFloat(a[1])), ...bids.map(b => parseFloat(b[1])));
+                let askSum = 0, bidSum = 0, currAsk = 0, currBid = 0;
+
+                document.getElementById('ob-asks').innerHTML = asks.map(a => {
+                    const price = parseFloat(a[0]), size = parseFloat(a[1]); askSum += size; currAsk += size;
+                    return `<div class="relative flex justify-between text-[10px] font-mono leading-tight py-[1px] ob-row group"><div class="absolute right-0 top-0 bottom-0 bg-red-500/10 group-hover:bg-red-500/20" style="width: ${(size / maxVol) * 100}%;"></div><span class="text-red-500 z-10 pl-1">${price.toFixed(2)}</span><span class="text-slate-400 w-1/3 text-right pr-2 z-10">${size.toFixed(4)}</span><span class="text-slate-500 w-1/3 text-right pr-1 z-10">${currAsk.toFixed(4)}</span></div>`;
+                }).join('');
+
+                document.getElementById('ob-bids').innerHTML = bids.map(b => {
+                    const price = parseFloat(b[0]), size = parseFloat(b[1]); bidSum += size; currBid += size;
+                    return `<div class="relative flex justify-between text-[17px] font-mono leading-tight py-[1px] ob-row group"><div class="absolute right-0 top-0 bottom-0 bg-green-500/10 group-hover:bg-green-500/20" style="width: ${(size / maxVol) * 100}%;"></div><span class="text-green-500 z-10 pl-1">${price.toFixed(2)}</span><span class="text-slate-400 w-1/3 text-right pr-2 z-10">${size.toFixed(4)}</span><span class="text-slate-500 w-1/3 text-right pr-1 z-10">${currBid.toFixed(4)}</span></div>`;
+                }).join('');
+
+                const obi = (bidSum - askSum) / (bidSum + askSum);
+                const obiEl = document.getElementById("obi-ratio");
+                obiEl.innerText = obi.toFixed(2);
+                obiEl.className = `font-bold ${obi > 0.2 ? 'text-green-500' : obi < -0.2 ? 'text-red-500' : 'text-slate-400'}`;
+                document.getElementById('ob-mid').innerText = d.mid_price.toFixed(2);
+            }
+
+            // Update 4 Charts
+            updateMultiChart(chartPnLPrice, tick, [d.pnl, d.mid_price]);
+            updateMultiChart(chartInvTox, tick, [d.inventory, d.vpin]);
+            updateMultiChart(chartLatency, tick, [d.latency_t2t]);
+            updateMultiChart(chartSpreadVol, tick, [d.spread, d.skew, d.volatility]);
         };
 
         ws.onclose = () => {
             document.getElementById("connection-status").innerText = "Connection Lost";
-            document.getElementById("connection-status").className = "text-xs text-red-500";
+            document.getElementById("connection-status").className = "text-xs text-red-500 font-bold animate-pulse";
         };
     </script>
 </body>

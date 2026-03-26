@@ -1,0 +1,29 @@
+# ==========================================
+# 📥 HISTORICAL DATA DOWNLOAD CONFIGURATION
+# ==========================================
+
+# วิธีรัน: 
+  # python scripts/00_download_data.py --config downloadData.yaml
+# ถ้าอยากเพิ่มคู่เหรียญ: 
+  # ก๊อปปี้ downloadData.yaml แล้วแก้ชื่อเป็น downloadData_eth.yaml ข้างในใส่ asset: ETHUSDT
+
+# ชื่อเหรียญที่ต้องการโหลด (ต้องตรงกับชื่อบน Binance เช่น BTCUSDT, ETHUSDT)
+
+asset: "ETHUSDT"
+
+# กำหนดช่วงเวลา 3 สภาวะตลาด (Regimes) แบบ 30 วัน
+regimes:
+  sideway:
+    start_date: "2023-07-15"
+    end_date: "2023-08-13"
+    description: "Mean-Reverting (Range-bound)"
+    
+  trend:
+    start_date: "2024-02-10"
+    end_date: "2024-03-10"
+    description: "Trending (High Drift)"
+    
+  toxic:
+    start_date: "2022-05-20"
+    end_date: "2022-06-18"
+    description: "High Volatility / High Toxicity (Flash Crash)"

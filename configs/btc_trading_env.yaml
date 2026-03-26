@@ -20,9 +20,9 @@ strategy:
 
 # 3. การจัดการความเสี่ยง (Risk Management)
 risk:
-  order_size: 0.001        # ขนาดไม้ขั้นต่ำ (BTC)
-  max_inventory: 0.010     # ถือของฝั่งใดฝั่งหนึ่งได้สูงสุด (BTC)
-  circuit_breaker_usd: -50.0 # ถ้า Net PnL ติดลบเกินเท่านี้ บอทจะหยุดทำงานทันที (Panic Stop)
+  order_size: 0.001        # ⭐️ ปรับจาก 0.001 เป็น 0.002 (เพื่อให้มูลค่าเกิน $100)
+  max_inventory: 0.020     # ⭐️ ปรับเพดานตามไปด้วย
+  circuit_breaker_usd: -50.0
 
 # 4. การจัดการข้อมูล (Feature Engineering)
 features:

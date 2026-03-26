@@ -16,6 +16,7 @@ sys.path.append(str(PROJECT_ROOT))
 folder_path = PROJECT_ROOT / "scripts"   # class path
 sys.path.append(folder_path)
 from scripts.paper_trader import ProductionMarketMaker, load_config
+import argparse
 
 os.chdir(PROJECT_ROOT / "scripts")
 app = FastAPI()
@@ -160,24 +161,26 @@ async def dashboard_trading_loop(bot: ProductionMarketMaker):
         print("\n🛑 AI Trading Loop Stopped.")
 
 async def main():
-    # 1. ชี้เป้าไปที่ไฟล์ Config ทั้ง 2 อัน
-    CONFIG_PATH = PROJECT_ROOT / "configs" / "hyperparameters.yaml"
-    TRADING_ENV_PATH = PROJECT_ROOT / "configs" / "trading_env.yaml" # ⭐️ เพิ่มบรรทัดนี้
-    MODEL_PATH = PROJECT_ROOT / "models" / "ppo_hft_chunked_final.zip"
-    
-    if not os.path.exists(MODEL_PATH):
-        print(f"❌ ไม่พบไฟล์โมเดลที่: {MODEL_PATH}")
-        sys.exit(1)
-        
-    # 2. โหลดไฟล์ YAML ทั้งคู่เข้ามาเป็น Dictionary
-    hyper_config = load_config(str(CONFIG_PATH))
-    trading_config = load_config(str(TRADING_ENV_PATH)) # ⭐️ เพิ่มบรรทัดนี้
-    
-    # 3. ส่ง Config ทั้ง 2 ตัวเข้าไปให้สมองบอท
-    bot = ProductionMarketMaker(str(MODEL_PATH), hyper_config, trading_config) # ⭐️ เพิ่ม trading_config ตรงนี้
-    
-    server_config = uvicorn.Config(app, host="127.0.0.1", port=8123, log_level="warning")
+    # ⭐️ 1. รับคำสั่งตอนรันว่ารันเหรียญอะไร (เช่น --pair btc --port 8123)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--pair", type=str, required=True, help="เช่น btc หรือ eth")
+    parser.add_argument("--port", type=int, default=8123)
+    args = parser.parse_args()
 
+    pair_name = args.pair.lower()
+
+    # ⭐️ 2. โหลดไฟล์ให้ตรงกับชื่อเหรียญแบบไดนามิก
+    CONFIG_PATH = PROJECT_ROOT / "configs" / "hyperparameters.yaml"
+    TRADING_ENV_PATH = PROJECT_ROOT / "configs" / f"{pair_name}_trading_env.yaml"
+    MODEL_PATH = PROJECT_ROOT / "models" / f"ppo_{pair_name}_final.zip"
+    
+    hyper_config = load_config(str(CONFIG_PATH))
+    trading_config = load_config(str(TRADING_ENV_PATH))
+    
+    bot = ProductionMarketMaker(str(MODEL_PATH), hyper_config, trading_config)
+    
+    # ⭐️ 3. รันเซิร์ฟเวอร์ด้วย Port ที่กำหนด
+    server_config = uvicorn.Config(app, host="127.0.0.1", port=args.port, log_level="warning")
     server = uvicorn.Server(server_config)
 
     try:

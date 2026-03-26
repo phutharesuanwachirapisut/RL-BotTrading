@@ -1,0 +1,29 @@
+# ==========================================
+# ⚙️ BNB TRADING ENVIRONMENT CONFIGURATION
+# ==========================================
+
+# 1. ข้อมูลกระดานเทรด (Exchange Settings)
+exchange:
+  name: "binance"
+  symbol: "BNB/USDT:USDT"          # ⭐️ แก้เป็น BNB
+  market_type: "future"
+  maker_fee: 0.0002        
+  taker_fee: 0.0005        
+
+# 2. กฎการเข้าทำกำไร (Market Making Strategy) 
+strategy:
+  min_spread: 0.5          # ห่างจากราคากลางขั้นต่ำ 0.5 USD (BNB วิ่งช่องละ 0.1)
+  max_spread: 5.0          # ห่างสูงสุด 5.0 USD
+  vol_multiplier: 2.0      # ตัวคูณขยาย Spread เวลาตลาดผันผวน
+  max_skew_usd: 3.0        # ระยะเอียงราคาเมื่อของล้นมือ
+  order_update_threshold: 0.5 # ถ้าราคาขยับไม่ถึง 0.5 USD ไม่ต้องแก้ตั๋ว
+
+# 3. การจัดการความเสี่ยง (Risk Management) 
+risk:
+  order_size: 0.2          # ⭐️ 0.2 BNB * $600 = $120 (ผ่านเกณฑ์ 100 USD สบายๆ)
+  max_inventory: 2.0       # ถือของฝั่งใดฝั่งหนึ่งได้สูงสุด 2.0 BNB
+  circuit_breaker_usd: -50.0
+
+# 4. การจัดการข้อมูล (Feature Engineering)
+features:
+  frame_stack: 5

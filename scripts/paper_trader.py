@@ -102,11 +102,11 @@ class LiveFeatureEngine:
 # 🤖 2. Production Market Maker (Async Edition)
 # ==========================================
 class ProductionMarketMaker:
-    # ⭐️ 1. รับ trading_config เข้ามาในวงเล็บด้วย
-    def __init__(self, model_path: str, hyper_config: dict, trading_config: dict):
-        print("🚀 Initializing Async Production Market Maker...")
-        self.hyper_config = hyper_config['env']
-        self.trading_config = trading_config # เก็บไว้ใช้งาน
+    def __init__(self, model_path: str, hyper_config: dict, trading_config: dict, mode: str = "demo"):
+        print(f"🚀 Initializing Async Production Market Maker ({mode.upper()} MODE)...")
+        
+        self.hyper_config = hyper_config # ✅ เก็บไว้เฉยๆ ไม่ต้องเจาะหา 'env' แล้ว
+        self.trading_config = trading_config
         
         self.model = PPO.load(model_path, device="cpu")
         self.feature_engine = LiveFeatureEngine()
@@ -129,15 +129,29 @@ class ProductionMarketMaker:
         self.frames = deque(maxlen=self.stack_size)
         
         # ⭐️ 3. ตั้งค่า CCXT เหมือนเดิม
+        # ตัวอย่างการตั้งค่า API ใน __init__ ของ ProductionMarketMaker
+        if mode == "live":
+            api_key = os.getenv('BINANCE_API_KEY')
+            secret_key = os.getenv('BINANCE_SECRET_KEY')
+            enable_demo = False
+            print("🚨 WARNING: RUNNING IN LIVE REAL-MONEY MODE 🚨")
+        else:
+            api_key = os.getenv('BINANCE_DEMO_API_KEY')
+            secret_key = os.getenv('BINANCE_DEMO_SECRET_KEY')
+            enable_demo = True
+            print("🟢 RUNNING IN SANDBOX DEMO MODE 🟢")
+
         self.exchange = ccxt.binance({
-            'apiKey': os.getenv('BINANCE_DEMO_API_KEY'),       
-            'secret': os.getenv('BINANCE_DEMO_SECRET_KEY'),    
+            'apiKey': api_key,       
+            'secret': secret_key,    
             'enableRateLimit': True,
+            'timeout': 30000,
             'options': {
-                'defaultType': self.trading_config['exchange']['market_type'], # ดึง future มาจาก yaml
+                'defaultType': self.trading_config['exchange']['market_type'],
             }
         })
-        self.exchange.enable_demo_trading(True)
+        
+        self.exchange.enable_demo_trading(enable_demo) # เปิด/ปิดโหมด Testnet ของ CCXT
         
         self.current_open_bid = 0.0
         self.current_open_ask = 0.0
@@ -165,30 +179,43 @@ class ProductionMarketMaker:
     # ⭐️ โค้ดที่ต้องแก้ไขในไฟล์ paper_trader.py
     async def listen_binance_ws(self):
         """หูทิพย์: รอรับข้อมูลจาก Binance ตลอดเวลา (พร้อมระบบ Auto-Reconnect)"""
-        uri = "wss://stream.binance.com:9443/ws/btcusdt@aggTrade/btcusdt@bookTicker/btcusdt@depth20@100ms"
+        # 1. จัดการชื่อ Symbol ให้ถูกต้อง เช่น ETH/USDT, ETH/USDT:USDT -> ethusdt
+        base_symbol = self.symbol.split(":")[0]  # ตัด :USDT ออก (ถ้ามี)
+        symbol_stream = base_symbol.replace("/", "").lower()
         
-        while True: # ⭐️ เพิ่ม While Loop วงนอกสุด เพื่อให้มันพยายามต่อใหม่เรื่อยๆ
+        # 2. ใช้ Endpoint สำหรับ Multi-stream
+        base_url = "wss://stream.binance.com:9443/stream?streams="
+        streams = f"{symbol_stream}@aggTrade/{symbol_stream}@bookTicker/{symbol_stream}@depth20@100ms"
+        uri = base_url + streams
+        
+        while True:
             try:
-                print(f"📡 Connecting to Binance WebSocket...")
+                print(f"📡 [WS] Connecting to Binance Multi-Stream: {symbol_stream}...")
                 async with websockets.connect(uri) as websocket:
-                    print(f"✅ Connected! Listening for real-time order flow...")
+                    print(f"✅ [WS] Connected! Listening for real-time order flow...")
                     while True:
                         message = await websocket.recv()
-                        data = json.loads(message)
+                        msg = json.loads(message)
                         
-                        if 'e' in data and data['e'] == 'aggTrade':
-                            self.feature_engine.process_agg_trade(data)
-                        elif 'bids' in data and 'asks' in data:
-                            self.feature_engine.orderbook = {"bids": data['bids'], "asks": data['asks']}
-                        elif 'u' in data: 
-                            self.feature_engine.process_book_ticker(data)
+                        # 3. ⭐️ สำคัญที่สุด: แกะ data ออกมาจากซองจดหมายของ Multi-stream
+                        if "data" in msg:
+                            stream_name = msg["stream"]
+                            data = msg["data"]
                             
+                            if "@aggTrade" in stream_name:
+                                self.feature_engine.process_agg_trade(data)
+                            elif "@bookTicker" in stream_name:
+                                self.feature_engine.process_book_ticker(data)
+                            elif "@depth20" in stream_name:
+                                self.feature_engine.orderbook = {
+                                    "bids": data.get('bids', []), 
+                                    "asks": data.get('asks', [])
+                                }
+                                
             except (websockets.exceptions.ConnectionClosedError, ConnectionResetError) as e:
-                # ⭐️ ดักจับ Error ตอนสายหลุด
                 print(f"⚠️ WebSocket Disconnected: {e}. Reconnecting in 3 seconds...")
-                await asyncio.sleep(3) # รอ 3 วินาทีแล้ววนกลับไปต่อใหม่
+                await asyncio.sleep(3)
             except Exception as e:
-                # เผื่อ Error อื่นๆ ที่ไม่ได้คาดคิด
                 print(f"🚨 Unexpected WebSocket Error: {e}. Reconnecting in 5 seconds...")
                 await asyncio.sleep(5)
 
@@ -244,8 +271,36 @@ class ProductionMarketMaker:
             self.listen_binance_ws(),
             self.trading_loop()
         )
+    
+    # === เพิ่ม Method นี้ใน class ProductionMarketMaker ===
+    async def emergency_flatten(self):
+        """ระบบฉุกเฉิน (Kill Switch): ยกเลิกทุก Order และโยน Market Order เพื่อล้างพอร์ตทันที"""
+        print("🚨 [KILL SWITCH] ACTIVATED: FLATTENING POSITIONS AND CANCELLING ALL ORDERS!")
+        try:
+            # 1. ยกเลิก Limit Orders เดิมทั้งหมด
+            await self.exchange.cancel_all_orders(self.symbol)
+            print("✅ [KILL SWITCH] Canceled all active quotes.")
+            
+            # 2. เช็ค Position เพื่อปิด
+            positions = await self.exchange.fetch_positions([self.symbol])
+            if positions and float(positions[0]['info']['positionAmt']) != 0:
+                amt = float(positions[0]['info']['positionAmt'])
+                side = 'sell' if amt > 0 else 'buy'
+                
+                # โยน Market Order สวนทางเพื่อปิด Position
+                await self.exchange.create_market_order(self.symbol, side, abs(amt))
+                
+                # ⭐️ ดึงชื่อเหรียญอัตโนมัติ
+                base_coin = self.symbol.split('/')[0]
+                print(f"✅ [KILL SWITCH] Market {side.upper()} order executed to flatten {abs(amt)} {base_coin}.")
+                
+            self.inventory = 0.0 # รีเซ็ตสถานะ
+            print("🛑 [KILL SWITCH] PORTFOLIO FLATTENED COMPLETELY.")
+        except Exception as e:
+            print(f"⚠️ [KILL SWITCH ERROR] {e}")
+            
     async def execute_orders(self, my_bid: float, my_ask: float):
-        """ระบบยิงออเดอร์อัจฉริยะ (Smart Execution)"""
+        """ระบบยิงออเดอร์อัจฉริยะ (Smart Execution) + Auto-Size Notional"""
         try:
             # เช็คว่าราคาเป้าหมายใหม่ ห่างจากออเดอร์ที่ตั้งไว้เดิมเกิน Threshold หรือไม่?
             bid_diff = abs(my_bid - self.current_open_bid)
@@ -258,18 +313,32 @@ class ProductionMarketMaker:
             # ถ้าราคาเปลี่ยนเยอะ -> ยกเลิกออเดอร์เก่าทั้งหมดก่อน
             await self.exchange.cancel_all_orders(self.symbol)
             
+            # ==========================================
+            # ⭐️ ระบบ AUTO-SIZE NOTIONAL (แก้บั๊ก -4164)
+            # ==========================================
+            # 1. ตั้งเป้าหมายมูลค่าที่ 105 USD (เผื่อบัฟเฟอร์ 5 ดอลลาร์ กันราคาร่วงกระทันหัน)
+            target_notional_usd = 105.0
+            
+            # 2. เอาเป้าหมายมาหารด้วยราคาประมูล (Bid) เพื่อหาว่าต้องใช้ขั้นต่ำกี่เหรียญ
+            min_required_size = target_notional_usd / my_bid
+            
+            # 3. เลือกขนาดที่ใหญ่ที่สุด ระหว่าง 'ค่าในไฟล์ yaml' กับ 'ค่าที่ระบบคำนวณให้'
+            # (ปัดเศษทศนิยม 3 ตำแหน่งเพื่อให้ตรงกับกฎ Tick Size ของ BTC/USDT)
+            dynamic_size = max(self.order_size, round(min_required_size + 0.0005, 3))
+            
             orders_to_create = []
             
+            # ⭐️ ใช้ตัวแปร dynamic_size แทน self.order_size ในการส่งคำสั่ง
             # ถ้าของยังไม่เต็มมือฝั่งซื้อ ให้ตั้ง Bid
             if self.inventory < self.max_inventory:
                 orders_to_create.append(
-                    self.exchange.create_limit_buy_order(self.symbol, self.order_size, my_bid)
+                    self.exchange.create_limit_buy_order(self.symbol, dynamic_size, my_bid)
                 )
             
             # ถ้าของยังไม่เต็มมือฝั่งขาย (ยังไม่ Short ล้น) ให้ตั้ง Ask
             if self.inventory > -self.max_inventory:
                 orders_to_create.append(
-                    self.exchange.create_limit_sell_order(self.symbol, self.order_size, my_ask)
+                    self.exchange.create_limit_sell_order(self.symbol, dynamic_size, my_ask)
                 )
                 
             # ยิง 2 ออเดอร์ (Bid/Ask) ไปที่กระดานพร้อมๆ กันแบบขนาน (Parallel)
@@ -279,7 +348,12 @@ class ProductionMarketMaker:
             # จำราคาที่เพิ่งตั้งไป
             self.current_open_bid = my_bid
             self.current_open_ask = my_ask
-            print(f"🔫 [Executed] New Limit Orders -> Bid: {my_bid:.2f} | Ask: {my_ask:.2f}")
+            
+            # ⭐️ ดึงชื่อเหรียญด้านหน้าออกมา เช่น BNB/USDT -> BNB
+            base_coin = self.symbol.split('/')[0]
+            
+            # อัปเดต Log ให้โชว์ไซส์ที่ยิงไป พร้อมชื่อเหรียญที่ถูกต้อง
+            print(f"🔫 [Executed] Size: {dynamic_size:.3f} {base_coin} | Bid: {my_bid:.2f} | Ask: {my_ask:.2f}")
 
         except Exception as e:
             print(f"⚠️ [API Error] {str(e)}")

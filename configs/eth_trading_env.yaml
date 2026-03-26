@@ -1,0 +1,29 @@
+# ==========================================
+# ⚙️ ETHEREUM TRADING ENVIRONMENT CONFIGURATION
+# ==========================================
+
+# 1. ข้อมูลกระดานเทรด (Exchange Settings)
+exchange:
+  name: "binance"
+  symbol: "ETH/USDT:USDT"
+  market_type: "future"
+  maker_fee: 0.0002        
+  taker_fee: 0.0005        
+
+# 2. กฎการเข้าทำกำไร (Market Making Strategy) - ⭐️ ปรับให้เข้ากับสเกลราคา ETH
+strategy:
+  min_spread: 0.5          # ห่างจากราคากลางขั้นต่ำ 0.5 USD
+  max_spread: 5.0          # ห่างสูงสุด 5.0 USD
+  vol_multiplier: 2.0      # ตัวคูณขยาย Spread เวลาตลาดผันผวน
+  max_skew_usd: 3.0        # ระยะเอียงราคาเมื่อของล้นมือ
+  order_update_threshold: 0.5 # ถ้าราคาขยับไม่ถึง 0.5 USD ไม่ต้องแก้ตั๋ว (ประหยัด Rate Limit)
+
+# 3. การจัดการความเสี่ยง (Risk Management) - ⭐️ ปรับไซส์ให้เกิน 100 USD
+risk:
+  order_size: 0.04         # 0.04 ETH * $3000 = $120 (ผ่านเกณฑ์ขั้นต่ำสบายๆ)
+  max_inventory: 0.40      # ถือของฝั่งใดฝั่งหนึ่งได้สูงสุด (10 เท่าของ order_size)
+  circuit_breaker_usd: -50.0
+
+# 4. การจัดการข้อมูล (Feature Engineering)
+features:
+  frame_stack: 5
