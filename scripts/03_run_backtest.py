@@ -1,6 +1,6 @@
 import os
 import torch
-import argparse # ⭐️ นำเข้าไลบรารีรับคำสั่ง
+import argparse
 import numpy as np
 import polars as pl
 import matplotlib.pyplot as plt
@@ -18,32 +18,94 @@ PROJECT_ROOT = SCRIPT_DIR.parent
 sys.path.append(str(PROJECT_ROOT))
 from src.simulator.market_env import BinanceMarketMakerEnv
 
-def load_eval_data(parquet_path: str) -> np.ndarray:
-    print(f"📥 Loading Parquet: {os.path.basename(parquet_path)}")
-    df = pl.read_parquet(parquet_path)
-    feature_cols = ["price", "volume", "volatility_60s", "tfi", "vpin"] 
-    np_data = df.select(feature_cols).to_numpy().astype(np.float32)
-    split_idx = int(len(np_data) * 0.8)
-    return np_data[split_idx:]
-
 def load_config(yaml_path: str) -> dict:
     with open(yaml_path, 'r') as file:
         return yaml.safe_load(file)
 
-def run_backtest_for_regime(regime: str, pair_name: str, model, env_config: dict, device) -> dict:
-    # ⭐️ โหลดไฟล์ Parquet ให้ตรงกับชื่อเหรียญ
-    DATA_PATH = PROJECT_ROOT / "data" / "processed" / f"{pair_name.upper()}USDT_features_{regime}.parquet"
+def calculate_risk_metrics(pnl_history):
+    """คำนวณ Sharpe Ratio และ Sortino Ratio จาก PnL แบบ Step-by-step"""
+    if len(pnl_history) < 2: return 0.0, 0.0
+    
+    # หารายได้ที่เกิดขึ้นในแต่ละ Step (Returns)
+    returns = np.diff(pnl_history)
+    mean_return = np.mean(returns)
+    std_return = np.std(returns)
+    
+    # หาความผันผวนเฉพาะขาลง (Downside Deviation)
+    negative_returns = returns[returns < 0]
+    downside_std = np.std(negative_returns) if len(negative_returns) > 0 else 1e-8
+    
+    # ปรับสเกลเป็นรายวัน/รายปีโดยประมาณ (สมมติ 10,000 steps = 1 period)
+    scaling_factor = np.sqrt(10000) 
+    
+    sharpe_ratio = (mean_return / (std_return + 1e-8)) * scaling_factor
+    sortino_ratio = (mean_return / (downside_std + 1e-8)) * scaling_factor
+    
+    return sharpe_ratio, sortino_ratio
+
+def load_testset_data(pair_name: str, config: dict) -> np.ndarray:
+    """โหลดข้อมูลเฉพาะส่วนของ Test Set (Out-of-Sample) ตามที่ระบุใน YAML"""
+    # หาคีย์ของ Test set ในไฟล์ YAML
+    test_set_keys = list(config.get("test_set", {}).keys())
+    if not test_set_keys:
+        print("⚠️ ไม่พบข้อมูล 'test_set' ในไฟล์ YAML จะพยายามโหลดจากไฟล์ Test ทั่วไปแทน")
+        test_regime = "unseen_2022"
+    else:
+        test_regime = test_set_keys[0]
+
+    # ดึงไฟล์ที่ผ่านการ Normalize แล้ว
+    DATA_PATH = PROJECT_ROOT / "data" / "processed" / f"{pair_name.upper()}USDT_features_{test_regime}.parquet"
     
     if not os.path.exists(DATA_PATH):
-        print(f"⚠️ ข้าม {regime.upper()} - ไม่พบไฟล์ข้อมูล: {DATA_PATH}")
-        return None
+        print(f"❌ Error: ไม่พบไฟล์ Out-of-Sample Test Set: {DATA_PATH}")
+        sys.exit(1)
 
-    eval_data = load_eval_data(str(DATA_PATH))
-    env = BinanceMarketMakerEnv(eval_data, env_config)
+    print(f"📥 Loading Unseen Test Set: {DATA_PATH.name}")
+    df = pl.read_parquet(str(DATA_PATH))
+    
+    # ดึงคอลัมน์ Feature ที่ตรงกับ Env ของเรา
+    feature_cols = ["price", "quantity", "returns_pct_norm", "volatility_norm", "tfi_norm", "rsi_norm", "macd_raw_norm"]
+    available_cols = [c for c in feature_cols if c in df.columns]
+    
+    return df.select(available_cols).to_numpy().astype(np.float32)
+
+def main():
+    parser = argparse.ArgumentParser(description="Out-of-Sample Backtest Evaluation")
+    parser.add_argument("--pair", type=str, required=True, help="เช่น btc, eth")
+    parser.add_argument("--save_dir", type=str, default=None, help="โฟลเดอร์ปลายทางสำหรับเซฟกราฟ")
+    args = parser.parse_args()
+    
+    pair_name = args.pair.lower()
+
+    # 1. โหลด Configurations
+    DATA_CONFIG_PATH = PROJECT_ROOT / "configs" / f"downloadData_{pair_name}.yaml"
+    data_config = load_config(str(DATA_CONFIG_PATH)) if os.path.exists(DATA_CONFIG_PATH) else {}
+    
+    ENV_PATH = PROJECT_ROOT / "configs" / f"{pair_name}_trading_env.yaml"
+    env_config = load_config(str(ENV_PATH))
+    print(f"⚙️ Loaded Trading Env Config for {pair_name.upper()}")
+
+    # 2. โหลด Model
+    # พยายามหาไฟล์ model ล่าสุด
+    MODEL_PATH = PROJECT_ROOT / "models" / f"ppo_{pair_name}_chunked_final.zip"
+    if not os.path.exists(MODEL_PATH):
+        MODEL_PATH = PROJECT_ROOT / "models" / f"ppo_universal_hft_final.zip" # Fallback ไปหา Universal model
+        
+    if not os.path.exists(MODEL_PATH):
+        print(f"❌ Error: ไม่พบไฟล์โมเดลที่ {MODEL_PATH}")
+        return
+
+    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    print(f"🤖 Loading Agent from {MODEL_PATH.name} on {device.type.upper()}...")
+    model = PPO.load(str(MODEL_PATH), device=device)
+
+    # 3. เตรียมข้อมูลและ Environment
+    test_data = load_testset_data(pair_name, data_config)
+    env = BinanceMarketMakerEnv(test_data, env_config)
     
     history = {"mid_price": [], "pnl": [], "inventory": [], "spread_action": [], "skew_action": []}
 
-    print(f"🚀 Running Backtest on '{regime.upper()}' Regime for {pair_name.upper()}...")
+    print(f"🚀 Running Backtest on OUT-OF-SAMPLE Data...")
     obs, info = env.reset()
     done = False
     
@@ -61,109 +123,87 @@ def run_backtest_for_regime(regime: str, pair_name: str, model, env_config: dict
     for key in history:
         history[key] = np.array(history[key])
 
-    print(f"✅ {regime.upper()} Finished! Final PnL: {history['pnl'][-1]:.2f} USD")
-    return history
+    # 4. คำนวณ Metrics เชิง Quant
+    final_pnl = history['pnl'][-1]
+    sharpe, sortino = calculate_risk_metrics(history['pnl'])
+    print(f"✅ Backtest Finished!")
+    print(f"💰 Final Net PnL (After Fees): {final_pnl:.2f} USD")
+    print(f"📊 Sharpe Ratio: {sharpe:.2f} | Sortino Ratio: {sortino:.2f}")
 
-def main():
-    # ⭐️ 1. รับคำสั่งชื่อเหรียญ และ โฟลเดอร์ปลายทาง
-    parser = argparse.ArgumentParser(description="Multi-Asset Backtest Evaluation")
-    parser.add_argument("--pair", type=str, required=True, help="เช่น btc, eth")
-    parser.add_argument("--save_dir", type=str, default=None, help="โฟลเดอร์ปลายทางสำหรับเซฟกราฟ")
-    args = parser.parse_args()
-    pair_name = args.pair.lower()
+    # 5. วาดกราฟ Dashboard
+    print(f"\n📈 Generating Out-of-Sample Dashboard for {pair_name.upper()}...")
+    fig, axes = plt.subplots(3, 1, figsize=(12, 14), gridspec_kw={'height_ratios': [2, 1, 1]})
+    fig.suptitle(f'HFT Market Maker [{pair_name.upper()}/USDT] - Out-of-Sample Evaluation', fontsize=18, fontweight='bold')
 
-    # ⭐️ 2. โหลด Config แยกเหรียญ
-    ENV_PATH = PROJECT_ROOT / "configs" / f"{pair_name}_trading_env.yaml"
-    env_config = load_config(str(ENV_PATH))
-    print(f"⚙️ Loaded Trading Env Config for {pair_name.upper()}")
+    # กรองข้อมูลไม่ให้กราฟแน่นเกินไปถ้ารันยาว
+    max_plot_points = 5000
+    if len(history["pnl"]) > max_plot_points:
+        step = len(history["pnl"]) // max_plot_points
+        for key in history:
+            history[key] = history[key][::step]
 
-    # ⭐️ 3. โหลด Model ให้ตรงเหรียญ
-    MODEL_PATH = PROJECT_ROOT / "models" / f"ppo_{pair_name}_chunked_final.zip"
-    if not os.path.exists(MODEL_PATH):
-        print(f"❌ Error: ไม่พบไฟล์โมเดลที่ {MODEL_PATH}")
-        return
+    time_steps = np.arange(len(history["pnl"]))
 
-    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-    print(f"🤖 Loading PPO Agent for {pair_name.upper()} on {device.type.upper()}...")
-    model = PPO.load(str(MODEL_PATH), device=device)
+    # แถว 1: PnL & Metrics Box
+    ax1 = axes[0]
+    ax1.plot(time_steps, history["pnl"], color='green', label='Net PnL (USD)', linewidth=2)
+    ax1.set_ylabel('Net PnL (USD)', color='green', fontweight='bold')
+    ax1.grid(True, alpha=0.3)
+    ax1.legend(loc='upper left')
 
-    # รัน Backtest
-    regimes = ["sideway", "trend", "toxic"]
-    all_histories = {}
-    for regime in regimes:
-        hist = run_backtest_for_regime(regime, pair_name, model, env_config, device)
-        if hist is not None:
-            all_histories[regime] = hist
+    ax1_twin = ax1.twinx()
+    ax1_twin.plot(time_steps, history["mid_price"], color='gray', alpha=0.5, label='Mid Price')
+    ax1_twin.legend(loc='upper right')
+    
+    # ⭐️ เพิ่มกล่อง Text แสดง Sharpe/Sortino
+    textstr = '\n'.join((
+        f'Final Net PnL: ${final_pnl:.2f}',
+        f'Sharpe Ratio: {sharpe:.2f}',
+        f'Sortino Ratio: {sortino:.2f}'
+    ))
+    props = dict(boxstyle='round', facecolor='white', alpha=0.8, edgecolor='gray')
+    ax1.text(0.02, 0.05, textstr, transform=ax1.transAxes, fontsize=12,
+            verticalalignment='bottom', bbox=props, fontweight='bold', color='#1f2937')
+            
+    ax1.set_title("Profitability & Red Queen's Trap Resistance", fontweight='bold')
 
-    if not all_histories:
-        print("❌ ไม่มีการรันทดสอบใดๆ (ไม่พบไฟล์ข้อมูล)")
-        return
+    # แถว 2: Inventory
+    max_inv = env_config.get('max_inventory', 0.002)
+    ax2 = axes[1]
+    ax2.plot(time_steps, history["inventory"], color='blue', alpha=0.7)
+    ax2.axhline(0, color='black', linestyle='--', alpha=0.5)
+    ax2.axhline(max_inv, color='red', linestyle=':')
+    ax2.axhline(-max_inv, color='red', linestyle=':')
+    ax2.set_ylabel(f'Inventory ({pair_name.upper()})')
+    ax2.set_title("Risk Management (Inventory Control)")
+    ax2.grid(True, alpha=0.3)
 
-    print(f"\n📈 Generating The Ultimate 3-Regime Dashboard for {pair_name.upper()}...")
-    num_regimes = len(all_histories)
-    fig, axes = plt.subplots(3, num_regimes, figsize=(10 * num_regimes, 14), gridspec_kw={'height_ratios': [2, 1, 1]})
-    fig.suptitle(f'HFT Market Maker [{pair_name.upper()}/USDT] - Multi-Regime Evaluation', fontsize=20, fontweight='bold')
+    # แถว 3: Agent Actions (Spread / Skew)
+    ax3 = axes[2]
+    # สมมติการดึงค่ากลับจาก Action Space
+    spread_usd = ((history["spread_action"] + 1.0) / 2.0) * env_config.get('max_spread_multiplier', 10.0)
+    skew_usd = history["skew_action"] * env_config.get('max_skew_usd', 20.0)
 
-    for col_idx, (regime, history) in enumerate(all_histories.items()):
-        max_plot_points = 5000
-        if len(history["pnl"]) > max_plot_points:
-            step = len(history["pnl"]) // max_plot_points
-            for key in history:
-                history[key] = history[key][::step]
-
-        time_steps = np.arange(len(history["pnl"]))
-
-        # แถว 1: PnL
-        ax1 = axes[0, col_idx] if num_regimes > 1 else axes[0]
-        ax1.plot(time_steps, history["pnl"], color='green', label='PnL (USD)', linewidth=2)
-        ax1.set_ylabel('PnL (USD)', color='green', fontweight='bold')
-        ax1.grid(True, alpha=0.3)
-        ax1.legend(loc='upper left')
-
-        ax1_twin = ax1.twinx()
-        ax1_twin.plot(time_steps, history["mid_price"], color='gray', alpha=0.5, label='Price')
-        ax1_twin.legend(loc='upper right')
-        ax1.set_title(f"[{regime.upper()}] Profitability", fontweight='bold')
-
-        # แถว 2: Inventory (⭐️ ดึงค่าจาก risk.max_inventory)
-        max_inv = env_config['risk']['max_inventory']
-        ax2 = axes[1, col_idx] if num_regimes > 1 else axes[1]
-        ax2.plot(time_steps, history["inventory"], color='blue', alpha=0.7)
-        ax2.axhline(0, color='black', linestyle='--', alpha=0.5)
-        ax2.axhline(max_inv, color='red', linestyle=':')
-        ax2.axhline(-max_inv, color='red', linestyle=':')
-        if col_idx == 0:
-            ax2.set_ylabel(f'Inventory ({pair_name.upper()})')
-        ax2.set_title("Risk Management")
-        ax2.grid(True, alpha=0.3)
-
-        # แถว 3: Agent Actions (⭐️ ดึงค่าจาก strategy)
-        ax3 = axes[2, col_idx] if num_regimes > 1 else axes[2]
-        spread_usd = ((history["spread_action"] + 1.0) / 2.0) * env_config['strategy']['max_spread']
-        skew_usd = history["skew_action"] * env_config['strategy']['max_skew_usd']
-
-        ax3.plot(time_steps, spread_usd, color='purple', label='Spread', alpha=0.8)
-        ax3.plot(time_steps, skew_usd, color='orange', label='Skew', alpha=0.8)
-        ax3.axhline(0, color='black', linestyle='--', alpha=0.5)
-        if col_idx == 0:
-            ax3.set_ylabel('USD')
-        ax3.set_xlabel('Time Steps')
-        ax3.set_title("Quoting Behavior")
-        ax3.legend(loc='upper right')
-        ax3.grid(True, alpha=0.3)
+    ax3.plot(time_steps, spread_usd, color='purple', label='Spread Control ($\gamma$)', alpha=0.8)
+    ax3.plot(time_steps, skew_usd, color='orange', label='Micro-Skew (USD)', alpha=0.8)
+    ax3.axhline(0, color='black', linestyle='--', alpha=0.5)
+    ax3.set_ylabel('Parameter Action')
+    ax3.set_xlabel('Time Steps')
+    ax3.set_title("Agent Parameter Tuning (AS-Avatar)")
+    ax3.legend(loc='upper right')
+    ax3.grid(True, alpha=0.3)
 
     plt.tight_layout()
     
-    # ⭐️ ตรวจสอบว่าถูกสั่งรันจาก Pipeline (มี --save_dir) หรือรันมือปกติ
     if args.save_dir:
-        save_path = Path(args.save_dir) / f"backtest_{pair_name}.png"
+        save_path = Path(args.save_dir) / f"backtest_{pair_name}_out_of_sample.png"
     else:
-        save_path = PROJECT_ROOT / "notebooks" / f"backtest_dashboard_{pair_name}.png"
+        save_path = PROJECT_ROOT / "results" / f"backtest_{pair_name}_out_of_sample.png"
+        save_path.parent.mkdir(parents=True, exist_ok=True)
         
     plt.savefig(save_path, dpi=300)
     print(f"🎉 Dashboard Saved Successfully at: {save_path}")
     
-    # ถ้าโดนสั่งรันจาก Pipeline ไม่ต้องเด้งหน้าต่าง plt.show() ขึ้นมาขัดจังหวะ
     if not args.save_dir:
         plt.show()
 

@@ -249,9 +249,33 @@ async def dashboard_trading_loop(bot: ProductionMarketMaker):
                 
             elapsed = asyncio.get_event_loop().time() - loop_start
             await asyncio.sleep(max(0.0, 1.0 - elapsed))
+
+        try:
+            status_dir = Path("logs/live_status")
+            status_dir.mkdir(parents=True, exist_ok=True)
             
+            status_data = {
+                "Asset": bot.symbol.split('/')[0].upper(), # ดึงชื่อเหรียญอัตโนมัติ (เช่น BTC)
+                "Mode": getattr(bot, 'mode', 'UNKNOWN').upper(), # ดึงโหมด (SANDBOX/LIVE)
+                "Inventory": BOT_STATE["inventory"], 
+                "Realized_PnL": BOT_STATE["realized_pnl"], 
+                "Unrealized_PnL": BOT_STATE["gross_pnl"] - BOT_STATE["realized_pnl"], 
+                "Status": "Running 🟢",
+                "Last_Update": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+            
+            # บันทึกไฟล์โดยใช้ชื่อเหรียญ (เช่น btc_status.json)
+            filename = f"{bot.symbol.split('/')[0].lower()}_status.json"
+            with open(status_dir / filename, 'w') as f: 
+                json.dump(status_data, f)
+
+        except Exception as e:
+            pass # ป้องกันไม่ให้บอทหลักพังถ้าเขียนไฟล์ Error
+
     except asyncio.CancelledError:
         print("\n🛑 AI Trading Loop Stopped.")
+
+    
 
 async def main():
     # ⭐️ 1. เพิ่ม --mode เข้าไปใน ArgumentParser

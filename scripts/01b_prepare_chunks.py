@@ -1,68 +1,70 @@
 import polars as pl
 import argparse
-import yaml
-from pathlib import Path
+import glob
 import os
 import sys
+from pathlib import Path
 
-try:
-    SCRIPT_DIR = Path(__file__).resolve().parent
-except NameError:
-    SCRIPT_DIR = Path(os.getcwd())
-
-PROJECT_ROOT = SCRIPT_DIR.parent
-sys.path.append(str(PROJECT_ROOT))
-
-def load_config(yaml_path: str) -> dict:
-    with open(yaml_path, 'r') as file:
-        return yaml.safe_load(file)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 def main():
-    # ⭐️ 1. รับค่า Config 
-    parser = argparse.ArgumentParser(description="Chunk Dataset by Days")
-    parser.add_argument("--config", type=str, default="downloadData.yaml")
-    args = parser.parse_args()
-
-    config_path = PROJECT_ROOT / "configs" / args.config
-    config = load_config(str(config_path))
-    asset = config.get("asset", "BTCUSDT")
-    pair_name = asset.replace("USDT", "").lower() # แปลง "BTCUSDT" เป็น "btc"
-    regimes = config.get("regimes", {}).keys()
-
-    print(f"🪓 Starting Chunking for {asset}...")
+    print("🪓 [DATA POOLING] เริ่มต้นสร้าง Cross-Asset Replay Buffer...")
     
-    # ⭐️ 2. สร้างโฟลเดอร์ Chunks แยกตามเหรียญ (เช่น btc_chunks)
-    OUTPUT_DIR = PROJECT_ROOT / "data" / "processed" / f"{pair_name}_chunks"
+    PROC_DIR = PROJECT_ROOT / "data" / "processed"
+    OUTPUT_DIR = PROC_DIR / "pooled_chunks"
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     
-    for regime in regimes:
-        # ⭐️ 3. หาไฟล์ Features ของเหรียญนั้นๆ
-        INPUT_FILE = PROJECT_ROOT / "data" / "processed" / f"{asset}_features_{regime}.parquet"
-        
-        if not os.path.exists(INPUT_FILE):
-            print(f"⚠️ ข้าม {regime} - ไม่พบไฟล์ {INPUT_FILE}")
-            continue
+    # 1. กวาดหาไฟล์ features ทั้งหมด
+    feature_files = glob.glob(os.path.join(PROC_DIR, "*_features_*.parquet"))
+    
+    if not feature_files:
+        print("❌ ไม่พบไฟล์ Features กรุณารัน Data Pipeline ก่อน")
+        sys.exit(1)
 
-        print(f"\n📥 Loading {regime} dataset...")
-        df = pl.read_parquet(str(INPUT_FILE))
+    print(f"📥 พบไฟล์ข้อมูลทั้งหมด {len(feature_files)} ไฟล์. กำลังคัดกรองและเทรวมกัน (Pooling)...")
+    
+    # ⭐️ 2. กำหนดคอลัมน์มาตรฐานของระบบใหม่ (7 คอลัมน์)
+    EXPECTED_COLS = [
+        "price", "quantity", "returns_pct_norm", 
+        "volatility_norm", "tfi_norm", "rsi_norm", "macd_raw_norm"
+    ]
+    
+    dfs = []
+    for f in feature_files:
+        df = pl.read_parquet(f)
         
-        if "datetime" not in df.columns:
-            print(f"❌ Error: ไม่พบคอลัมน์ 'datetime' ใน {regime}")
-            continue
+        # ⭐️ ตรวจสอบว่าไฟล์นี้มีคอลัมน์ครบตามระบบใหม่หรือไม่
+        if all(col in df.columns for col in EXPECTED_COLS):
+            # ดึงมาเฉพาะคอลัมน์ที่ต้องการ เรียงให้ตรงกัน
+            dfs.append(df.select(EXPECTED_COLS))
+        else:
+            print(f"⚠️ ข้ามไฟล์เก่า/ผิดรูปแบบ: {os.path.basename(f)} (มี {len(df.columns)} คอลัมน์)")
             
-        df = df.with_columns([
-            pl.col("datetime").dt.date().alias("date")
-        ])
+    if not dfs:
+        print("❌ ไม่พบไฟล์ข้อมูลที่ถูกต้องตามโครงสร้างใหม่เลย (กรุณารัน Step 1 & 2 ใหม่)")
+        sys.exit(1)
         
-        print(f"🔪 Partitioning {regime} by days...")
-        partitions = df.partition_by("date", as_dict=True)
+    # 3. รวมร่าง
+    pooled_df = pl.concat(dfs)
+    total_rows = len(pooled_df)
+    print(f"🌊 Pooled Dataset Size: {total_rows:,} rows")
+    
+    # 4. สับข้อมูลเป็น Chunks
+    chunk_size = 500_000 
+    num_chunks = (total_rows // chunk_size) + 1
+    
+    print(f"🔪 กำลังสับเป็น {num_chunks} Chunks...")
+    for i in range(num_chunks):
+        start_idx = i * chunk_size
+        end_idx = min((i + 1) * chunk_size, total_rows)
         
-        for (d,), df_chunk in partitions.items():
-            df_chunk = df_chunk.drop("date") 
-            output_filename = OUTPUT_DIR / f"chunk_{regime}_{d}.parquet"
+        chunk = pooled_df[start_idx:end_idx]
+        if len(chunk) > 0:
+            out_name = OUTPUT_DIR / f"universal_pool_chunk_{i+1:03d}.parquet"
+            chunk.write_parquet(str(out_name))
+            print(f"  -> Saved {out_name.name} ({len(chunk):,} rows)")
             
-            df_chunk.write_parquet(str(output_filename))
-            print(f"  -> Saved {output_filename.name} ({len(df_chunk)} rows)")
+    print("✅✅✅ การสร้าง Cross-Asset Pooled Dataset เสร็จสมบูรณ์! พร้อมส่งให้ AI เรียนรู้แบบสากลแล้ว")
 
 if __name__ == "__main__":
     main()

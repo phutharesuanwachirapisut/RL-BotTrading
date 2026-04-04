@@ -1,0 +1,33 @@
+# ==========================================
+# 📥 INSTITUTIONAL DATA PIPELINE CONFIG
+# ==========================================
+asset: "SOLUSDT"
+
+# ⭐️ 1. Training Set Regimes (แบ่งตามสภาวะตลาดอดีต)
+regimes:
+  bull:
+    start_date: "2020-10-01"
+    end_date: "2021-04-30"
+    description: "Bull Market (Trending Up)"
+    
+  bear:
+    start_date: "2018-01-01"
+    end_date: "2018-12-31"
+    description: "Bear Market (Trending Down & Bleeding)"
+    
+  high_vol:
+    start_date: "2020-03-01"
+    end_date: "2020-03-31"
+    description: "High Volatility / Flash Crash (COVID-19 Drop)"
+    
+  recovery:
+    start_date: "2019-01-01"
+    end_date: "2019-06-30"
+    description: "Recovery (Accumulation & Range-bound)"
+
+# ⭐️ 2. Out-of-Sample Test Set (ห้ามให้ AI เห็นเด็ดขาดจนกว่าจะเทรนเสร็จ)
+test_set:
+  unseen_2022:
+    start_date: "2022-01-01"
+    end_date: "2022-10-01"
+    description: "Out-of-Sample Validation Set"

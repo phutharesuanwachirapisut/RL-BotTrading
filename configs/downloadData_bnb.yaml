@@ -1,29 +1,33 @@
 # ==========================================
-# 📥 HISTORICAL DATA DOWNLOAD CONFIGURATION
+# 📥 INSTITUTIONAL DATA PIPELINE CONFIG
 # ==========================================
-
-# วิธีรัน: 
-  # python scripts/00_download_data.py --config downloadData.yaml
-# ถ้าอยากเพิ่มคู่เหรียญ: 
-  # ก๊อปปี้ downloadData.yaml แล้วแก้ชื่อเป็น downloadData_eth.yaml ข้างในใส่ asset: ETHUSDT
-
-# ชื่อเหรียญที่ต้องการโหลด (ต้องตรงกับชื่อบน Binance เช่น BTCUSDT, ETHUSDT)
-
 asset: "BNBUSDT"
 
-# กำหนดช่วงเวลา 3 สภาวะตลาด (Regimes) แบบ 30 วัน สำหรับ BNB
+# ⭐️ 1. Training Set Regimes (แบ่งตามสภาวะตลาดอดีต)
 regimes:
-  sideway:
-    start_date: "2023-09-01"
-    end_date: "2023-09-30"
-    description: "Mean-Reverting (Range-bound)"
+  bull:
+    start_date: "2020-10-01"
+    end_date: "2021-04-30"
+    description: "Bull Market (Trending Up)"
     
-  trend:
-    start_date: "2024-02-15"
-    end_date: "2024-03-15"
-    description: "Trending (High Drift)"
+  bear:
+    start_date: "2018-01-01"
+    end_date: "2018-12-31"
+    description: "Bear Market (Trending Down & Bleeding)"
     
-  toxic:
-    start_date: "2023-05-20"
-    end_date: "2023-06-18"
-    description: "High Volatility / High Toxicity (Flash Crash)"
+  high_vol:
+    start_date: "2020-03-01"
+    end_date: "2020-03-31"
+    description: "High Volatility / Flash Crash (COVID-19 Drop)"
+    
+  recovery:
+    start_date: "2019-01-01"
+    end_date: "2019-06-30"
+    description: "Recovery (Accumulation & Range-bound)"
+
+# ⭐️ 2. Out-of-Sample Test Set (ห้ามให้ AI เห็นเด็ดขาดจนกว่าจะเทรนเสร็จ)
+test_set:
+  unseen_2022:
+    start_date: "2022-01-01"
+    end_date: "2022-10-01"
+    description: "Out-of-Sample Validation Set"

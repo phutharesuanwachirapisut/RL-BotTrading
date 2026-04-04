@@ -14,39 +14,52 @@ class BinanceMarketMakerEnv(gym.Env):
         self.data = data
         self.n_steps = len(self.data)
 
-        # 1. Config พื้นฐาน
-        self.max_inventory = config.get("max_inventory", 0.0004)
-        self.order_size = config.get("order_size", 0.0001)
-        self.maker_fee = config.get("maker_fee", -0.0005) # ⭐️ ได้เงินทอน 5 bps
-        self.eta = config.get("eta", 100.0)
+        # ==========================================
+        # 1. Config & Constraints
+        # ==========================================
+        self.max_inventory = config.get("max_inventory", 0.002) # สมมติเป็น BTC
+        self.order_size = config.get("order_size", 0.0002)
+        self.maker_fee = config.get("maker_fee", 0.0002) # 0.02%
+        self.initial_balance = config.get("initial_balance", 100.0)
 
-        self.min_spread = config.get("min_spread", 2.0)
-        self.max_spread = config.get("max_spread", 25.0)
-        self.vol_multiplier = config.get("vol_multiplier", 10.0)
-        self.max_skew_usd = config.get("max_skew_usd", 30.0)
+        # AS Parameters Limits
+        self.min_spread = config.get("min_spread", 1.0)
+        self.max_spread_multiplier = config.get("max_spread_multiplier", 10.0)
+        self.max_skew_usd = config.get("max_skew_usd", 20.0)
 
-        # 2. Action: [0] = Spread, [1] = Skew (ตรงกับสคริปต์ 03 เป๊ะๆ)
+        # ==========================================
+        # 2. Action Space (The AS-Avatar)
+        # ==========================================
+        # [0]: Risk Aversion (Gamma) -> ให้ AI เลือกความกลัวตั้งแต่ -1 ถึง 1
+        # [1]: Micro-Skew -> ให้ AI บิดราคาเสนอซื้อขายเล็กน้อย
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
 
-        # 3. Frame Stacking
-        self.stack_size = config.get("frame_stack", 5)
+        # ==========================================
+        # 3. Observation Space (Normalized Features)
+        # ==========================================
+        self.stack_size = config.get("frame_stack", 10) # เพิ่ม Stack ให้เห็น Temporal Pattern
         self.frames = collections.deque(maxlen=self.stack_size)
 
-        # ⭐️ Features: vol, vola, tfi, vpin + inv, time = 6 ตัว
+        # Features: [vol_norm, tfi_norm, rsi_norm, macd_norm, inv_ratio, time_ratio] = 6 ตัว
         self.n_features_per_frame = 6
         total_features = self.stack_size * self.n_features_per_frame
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(total_features,), dtype=np.float32)
 
-        self.initial_balance = config.get("initial_balance", 30.0)
-        self.current_step = 0
-        self.inventory = 0.0
-        self.cash = self.initial_balance
+        self.reset()
 
     def reset(self, seed=None, options=None) -> Tuple[np.ndarray, Dict]:
         super().reset(seed=seed)
         self.current_step = 0
+        
+        # Portfolio Management
         self.inventory = 0.0
         self.cash = self.initial_balance
+        self.avg_entry_price = 0.0
+        
+        # Trackers
+        self.steps_holding = 0
+        self.realized_pnl = 0.0
+        self.total_fees_paid = 0.0
 
         self.frames.clear()
         first_frame = self._get_current_frame()
@@ -56,8 +69,9 @@ class BinanceMarketMakerEnv(gym.Env):
         return self._get_stacked_observation(), self._get_info()
 
     def _get_current_frame(self) -> np.ndarray:
-        # ดึง index 1 ถึง 4: volume, vola, tfi, vpin (ข้าม price ที่เป็น index 0)
-        market_obs = self.data[self.current_step, 1:5]
+        # ดึง Feature ที่ผ่านการ Normalize (สมมติว่าอยู่ index 2 ถึง 5 ใน data)
+        # Index 0 = Price, Index 1 = Quantity, Index 2+ = Features
+        market_obs = self.data[self.current_step, 2:6] 
         inv_ratio = self.inventory / self.max_inventory
         time_ratio = self.current_step / self.n_steps
         return np.append(market_obs, [inv_ratio, time_ratio]).astype(np.float32)
@@ -65,115 +79,134 @@ class BinanceMarketMakerEnv(gym.Env):
     def _get_stacked_observation(self) -> np.ndarray:
         return np.concatenate(list(self.frames))
 
-    def _get_info(self) -> Dict:
-        mid_price = self.data[self.current_step, 0]
-        mtm_balance = self.cash + (self.inventory * mid_price)
-        return {
-            "inventory": self.inventory,
-            "cash": self.cash,
-            "portfolio_value": mtm_balance,
-            "pnl": mtm_balance - self.initial_balance
-        }
-
-    def _simulate_micro_trades(self, current_mid: float, next_mid: float, volume: float) -> np.ndarray:
-        side = 1.0 if next_mid > current_mid else (-1.0 if next_mid < current_mid else (1.0 if np.random.rand() > 0.5 else -1.0))
-        return np.array([
-            [current_mid, volume * 0.3, side],
-            [next_mid, volume * 0.7, side]
-        ], dtype=np.float64)
-
     def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, Dict]:
         if self.current_step >= self.n_steps - 1:
             return self._get_stacked_observation(), 0.0, True, False, self._get_info()
 
+        # ตึงข้อมูลดิบสำหรับคำนวณบัญชี (Price, Volume)
         mid_price = self.data[self.current_step, 0]
         volume = self.data[self.current_step, 1]
-        volatility = self.data[self.current_step, 2]
-        tfi = self.data[self.current_step, 3]
-        vpin = self.data[self.current_step, 4]
-        next_mid_price = self.data[self.current_step + 1, 0]
+        next_mid = self.data[self.current_step + 1, 0]
+        
+        # ดึง Volatility (สมมติอยู่ index 2 และคืนค่ากลับมาเป็นสเกลบวก)
+        volatility_norm = abs(self.data[self.current_step, 2]) 
 
         # ==========================================
-        # 1. Action Decoding & Armor
+        # 🧠 1. AS-Avatar (แปลง Action เป็น Bid/Ask)
         # ==========================================
-        spread_action = action[0]
-        skew_action = action[1]
+        gamma = 0.01 + ((action[0] + 1.0) / 2.0) * 0.19
+        ai_skew = action[1] * self.max_skew_usd
 
-        base_half_spread = self.min_spread + ((spread_action + 1.0) / 2.0) * (self.max_spread - self.min_spread)
-        vol_premium = volatility * self.vol_multiplier
-        final_half_spread = base_half_spread + vol_premium
-
-        # ให้ AI คุม Skew ได้โดยตรง
-        ai_skew = skew_action * self.max_skew_usd
-
-        # ระบบนิรภัย: ช่วยดัมพ์ราคาเวลาของล้นมือ
+        # คำนวณ Reservation Price (จุดศูนย์กลางใหม่ที่เบ้หนี Inventory)
         inv_ratio = self.inventory / self.max_inventory
-        risk_skew = inv_ratio * self.max_skew_usd 
-        final_skew = ai_skew + risk_skew # เอาความฉลาด AI ผสมกับระบบนิรภัย
+        reservation_price = mid_price - (inv_ratio * gamma * self.max_skew_usd)
 
-        # ล็อคไม่ให้ Skew กว้างกว่า Spread
-        max_safe_skew = final_half_spread - 0.5
-        final_skew = np.clip(final_skew, -max_safe_skew, max_safe_skew)
+        # คำนวณ Optimal Spread (ผันแปรตามความกลัวและความผันผวน)
+        base_half_spread = (self.min_spread + (volatility_norm * self.max_spread_multiplier)) / 2.0
+        optimal_half_spread = base_half_spread * (1.0 + gamma)
 
-        # VPIN Armor: ถ้ารายใหญ่เข้า (เกิน 80%) ถ่าง Spread หนี 10 USD
-        if vpin > 0.8:
-            final_half_spread += 10.0
+        my_bid = reservation_price - optimal_half_spread + ai_skew
+        my_ask = reservation_price + optimal_half_spread + ai_skew
 
-        my_bid = mid_price - final_half_spread - final_skew
-        my_ask = mid_price + final_half_spread - final_skew
-
-        # Circuit Breakers
-        if self.inventory >= self.max_inventory:
+        # ==========================================
+        # 🛡️ 2. No-Trade Regime (Red Queen's Trap Defense)
+        # ==========================================
+        # หาก Spread แคบกว่าค่าธรรมเนียมที่ต้องจ่าย 2 ฝั่ง (ซื้อเข้า+ขายออก) ให้ดึงออเดอร์หนี
+        min_profitable_spread = (mid_price * self.maker_fee) * 1.1 # เผื่อกำไร 0.5
+        calculated_spread = my_ask - my_bid
+        
+        if calculated_spread < min_profitable_spread:
             my_bid = 0.0
-        if self.inventory <= -self.max_inventory:
-            my_ask = float('inf')
+            my_ask = float('inf') # ระงับการทำ Market Making ชั่วคราว
+
+        # Circuit Breakers ปกติ
+        if self.inventory >= self.max_inventory: my_bid = 0.0
+        if self.inventory <= -self.max_inventory: my_ask = float('inf')
 
         # ==========================================
-        # 2. Execute Matching
+        # ⚙️ 3. Execution & Portfolio Update
         # ==========================================
-        simulated_trades = self._simulate_micro_trades(mid_price, next_mid_price, volume)
-
-        new_inventory, cash_flow, bid_filled, ask_filled = run_fast_matching_engine(
-            agent_bid_price=my_bid,
-            agent_ask_price=my_ask,
-            agent_order_size=self.order_size,
-            market_trades=simulated_trades,
-            current_inventory=self.inventory,
-            max_inventory=self.max_inventory,
-            maker_fee=self.maker_fee
+        sim_trades = np.array([[mid_price, volume * 1.5, 1], [next_mid, volume * 1.5, -1]])
+        new_inv, cash_flow, _, _ = run_fast_matching_engine(
+            my_bid, my_ask, self.order_size, sim_trades, self.inventory, self.max_inventory, self.maker_fee
         )
 
-        old_portfolio_value = self.cash + (self.inventory * mid_price)
-        self.inventory = new_inventory
-        self.cash += cash_flow
-        new_portfolio_value = self.cash + (self.inventory * next_mid_price)
-
-        # ==========================================
-        # 📈 THE PURE PNL REWARD (Asymmetric Risk Aversion)
-        # ==========================================
-        step_pnl = new_portfolio_value - old_portfolio_value
-        inventory_penalty = self.eta * (self.inventory ** 2)
+        step_realized_pnl = 0.0
+        trade_volume = abs(new_inv - self.inventory)
         
-        # ⭐️ ยกเลิกโบนัสหลอกเด็ก (trade_bonus)
-        # ปล่อยให้ Maker Rebate (-0.0005) ที่เราตั้งไว้ใน config ทำงานร่วมกับ PnL ไปตามธรรมชาติ
+        if trade_volume > 0:
+            # คำนวณค่าธรรมเนียมของ Step นี้
+            exec_price = mid_price # ประมาณการราคา execution
+            step_fee = trade_volume * exec_price * self.maker_fee
+            self.total_fees_paid += step_fee
+            
+            # การอัปเดต Avg Entry Price และคำนวณ Realized PnL (Round-trip completion)
+            if self.inventory == 0:
+                self.avg_entry_price = exec_price
+            elif np.sign(self.inventory) == np.sign(new_inv - self.inventory):
+                # ถัวเฉลี่ยต้นทุนถ้าซื้อเพิ่มฝั่งเดิม
+                total_cost = (abs(self.inventory) * self.avg_entry_price) + (trade_volume * exec_price)
+                self.avg_entry_price = total_cost / abs(new_inv)
+            else:
+                # ถ้าทอนของออก (ปิด position บางส่วนหรือทั้งหมด) -> รับรู้กำไร/ขาดทุน
+                direction = 1 if self.inventory > 0 else -1
+                step_realized_pnl = trade_volume * (exec_price - self.avg_entry_price) * direction
+                self.realized_pnl += step_realized_pnl
+                
+                # รีเซ็ตต้นทุนถ้าปิดหมด
+                if new_inv == 0: self.avg_entry_price = 0.0
 
-        # ⭐️ สมการใหม่: เกลียดการขาดทุนให้มากกว่าตอนได้กำไร (Risk Averse)
-        if step_pnl < 0:
-            # ถ้าก้าวนี้ขาดทุน ลงโทษหนักคูณ 2 (ให้มันกลัวการโดนลาก)
-            reward = (step_pnl * 200.0) - inventory_penalty
+        self.inventory = new_inv
+        self.cash += cash_flow
+
+        # ==========================================
+        # 📈 4. Round-trip & Asymmetric Reward
+        # ==========================================
+        reward = 0.0
+        
+        # A. Trade Completion Reward (ให้รางวัล/ทำโทษ เฉพาะที่รับรู้ PnL แล้ว)
+        if step_realized_pnl > 0:
+            reward += step_realized_pnl * 50.0  # ได้กำไร ชมเชย
+        elif step_realized_pnl < 0:
+            reward += step_realized_pnl * 150.0 # ขาดทุน ทำโทษหนักกว่า (Asymmetric)
+
+        # B. Holding Penalty (ลงโทษถ้าถือของค้างนานเกินไป ป้องกันการเดาทิศทางลากยาว)
+        if self.inventory != 0:
+            self.steps_holding += 1
+            holding_penalty = (self.steps_holding * 0.001) * abs(self.inventory / self.max_inventory)
+            reward -= holding_penalty
         else:
-            # ถ้าก้าวนี้กำไร (หรือเสมอตัว) ให้รางวัลปกติ
-            reward = (step_pnl * 100.0) - inventory_penalty
+            self.steps_holding = 0 # รีเซ็ตเมื่อพอร์ตว่าง
+            
+        # C. Unrealized Loss Penalty (ทำโทษถ้าโดนลากจนพอร์ตแดง แต่ไม่ให้รางวัลถ้าเขียว)
+        if self.inventory != 0:
+            unrealized_pnl = abs(self.inventory) * (next_mid - self.avg_entry_price) * (1 if self.inventory > 0 else -1)
+            if unrealized_pnl < 0:
+                reward += unrealized_pnl * 10.0 # ตอดคะแนนเบาๆ เพื่อให้รีบตัดขาดทุน
 
         self.current_step += 1
-        terminated = False
+        portfolio_value = self.cash + (self.inventory * next_mid)
+        terminated = portfolio_value < (self.initial_balance * 0.5)
+        
+        if terminated: reward -= 500.0
 
-        # Stop Loss ที่ 50% ของพอร์ต
-        if new_portfolio_value < self.initial_balance * 0.5:
-            terminated = True
-            reward -= 500.0 # ตีหัวแตกตอนพอร์ตละลาย
-
-        if not terminated and self.current_step < self.n_steps:
+        if not terminated:
             self.frames.append(self._get_current_frame())
 
         return self._get_stacked_observation(), float(reward), terminated, False, self._get_info()
+
+    def _get_info(self) -> Dict:
+        mid_price = self.data[self.current_step, 0]
+        unrealized = 0.0
+        if self.inventory != 0:
+            unrealized = abs(self.inventory) * (mid_price - self.avg_entry_price) * (1 if self.inventory > 0 else -1)
+        
+        mtm_balance = self.cash + (self.inventory * mid_price)
+        return {
+            "inventory": self.inventory,
+            "realized_pnl": self.realized_pnl,
+            "unrealized_pnl": unrealized,
+            "fees_paid": self.total_fees_paid,
+            "portfolio_value": mtm_balance,
+            "pnl": mtm_balance - self.initial_balance
+        }

@@ -2,221 +2,296 @@ import os
 import sys
 import time
 import subprocess
-from datetime import datetime, timedelta
+import yaml
 from pathlib import Path
+from datetime import datetime, timedelta
 
-# ถอยหลังไปที่โฟลเดอร์หลักของโปรเจกต์ (ปรับระดับให้ตรงกับเครื่องของคุณ)
 PROJECT_ROOT = Path(__file__).resolve().parent
 
-# โค้ดสีสำหรับ Terminal
-C_HEADER = '\033[95m'
-C_BLUE = '\033[94m'
-C_GREEN = '\033[92m'
-C_YELLOW = '\033[93m'
-C_RED = '\033[91m'
-C_CYAN = '\033[96m'
+# ==========================================
+# 🎨 COLOR PALETTE (DARK GREEN THEME)
+# ==========================================
+C_DARK_GREEN = '\033[38;5;28m'   
+C_GREEN = '\033[38;5;34m'        
+C_LIME = '\033[38;5;46m'         
+C_GRAY = '\033[38;5;240m'        
+C_WHITE = '\033[97m'
+C_YELLOW = '\033[38;5;214m'      
+C_RED = '\033[38;5;160m'         
 C_RESET = '\033[0m'
+
+# ⭐️ เติมบรรทัดนี้ลงไปตรงนี้ครับ! ⭐️
+DEFAULT_ASSETS = ["btc", "eth", "bnb", "xrp", "ltc", "ada"]
 
 def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')
 
-def print_header(text):
-    print(f"\n{C_CYAN}{'='*60}")
-    print(f" {text}")
-    print(f"{'='*60}{C_RESET}\n")
+def print_hft_logo():
+    """พิมพ์โลโก้ HFT แบบ ASCII Art ด้วยโทนสีเขียว"""
+    logo = f"""
+{C_DARK_GREEN}██╗  ██╗{C_GREEN}███████╗{C_LIME}████████╗
+{C_DARK_GREEN}██║  ██║{C_GREEN}██╔════╝{C_LIME}╚══██╔══╝
+{C_DARK_GREEN}███████║{C_GREEN}█████╗  {C_LIME}   ██║   
+{C_DARK_GREEN}██╔══██║{C_GREEN}██╔══╝  {C_LIME}   ██║   
+{C_DARK_GREEN}██║  ██║{C_GREEN}██║     {C_LIME}   ██║   
+{C_DARK_GREEN}╚═╝  ╚═╝{C_GREEN}╚═╝     {C_LIME}   ╚═╝   {C_RESET}
+    """
+    print(logo)
+    print(f"{C_GRAY}======================================================{C_RESET}")
+    print(f"{C_WHITE} QUANTITATIVE DEPLOYMENT & EVALUATION MANAGER (v3.0){C_RESET}")
+    print(f"{C_GRAY}======================================================{C_RESET}\n")
 
 def get_user_input(prompt, valid_options=None, cast_type=str):
     while True:
         try:
-            user_input = input(f"{C_YELLOW}{prompt}:{C_RESET} ").strip().lower()
-            if not user_input:
-                continue
+            user_input = input(f"{C_GREEN}▶ {C_WHITE}{prompt}: {C_RESET}").strip().lower()
+            if not user_input: return ""
             value = cast_type(user_input)
             if valid_options and value not in valid_options:
                 print(f"{C_RED}[!] Please choose from: {valid_options}{C_RESET}")
                 continue
             return value
         except ValueError:
-            print(f"{C_RED}[!] Invalid format. Please try again.{C_RESET}")
+            print(f"{C_RED}[!] Invalid format.{C_RESET}")
 
-def get_date_input(regime_name, timeframe_days):
-    while True:
-        prompt = f"{C_YELLOW}Start Date for [{regime_name}] (Format: YYYY-MM-DD):{C_RESET} "
-        user_input = input(prompt).strip()
-        try:
-            start_date = datetime.strptime(user_input, "%Y-%m-%d")
-            end_date = start_date + timedelta(days=timeframe_days)
-            return start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")
-        except ValueError:
-            print(f"{C_RED}[!] Invalid date format. Must be YYYY-MM-DD.{C_RESET}")
+def select_assets_menu(title="SELECT ASSETS"):
+    """ระบบเลือกเหรียญแบบ Multiple Choice (Numbered List)"""
+    print(f"\n{C_LIME}>>> {title}{C_RESET}")
+    print(f"{C_GRAY}Enter numbers separated by spaces (e.g., 1 2 4), or 'all', or 'other'{C_RESET}")
+    
+    for i, asset in enumerate(DEFAULT_ASSETS, 1):
+        print(f"  {C_GRAY}[{i}]{C_RESET} {C_WHITE}{asset.upper()}{C_RESET}")
+    
+    choice = input(f"\n{C_GREEN}▶ {C_WHITE}Your selection (Default: All): {C_RESET}").strip().lower()
+    
+    # 1. กรณีไม่เลือก (ค่าว่าง) -> ใช้ Default ทั้งหมด
+    if not choice or choice == 'all':
+        return DEFAULT_ASSETS
+
+    # 2. กรณีเลือก 'other' -> ให้กรอกเอง
+    if choice == 'other':
+        custom = input(f"{C_GREEN}▶ {C_WHITE}Enter custom assets (comma separated): {C_RESET}").strip().lower()
+        return [a.strip() for a in custom.split(',')]
+
+    # 3. กรณีเลือกตามหมายเลข
+    try:
+        indices = [int(i) - 1 for i in choice.split() if i.isdigit()]
+        selected = [DEFAULT_ASSETS[i] for i in indices if 0 <= i < len(DEFAULT_ASSETS)]
+        return selected if selected else DEFAULT_ASSETS
+    except Exception:
+        return DEFAULT_ASSETS
+
+def load_regime_config(asset):
+    config_path = PROJECT_ROOT / f"downloadData_{asset}.yaml"
+    if not config_path.exists(): config_path = PROJECT_ROOT / "configs" / f"downloadData_{asset}.yaml"
+    return yaml.safe_load(open(config_path)) if config_path.exists() else None
+
+def auto_create_config(asset, template_asset="btc"):
+    template_path = PROJECT_ROOT / "configs" / f"downloadData_{template_asset}.yaml"
+    new_config_path = PROJECT_ROOT / "configs" / f"downloadData_{asset}.yaml"
+    if not template_path.exists(): return False
+    try:
+        with open(template_path, 'r', encoding='utf-8') as f:
+            template_content = f.read()
+        new_content = template_content.replace(f'asset: "{template_asset.upper()}USDT"', f'asset: "{asset.upper()}USDT"')
+        new_config_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(new_config_path, 'w', encoding='utf-8') as f:
+            f.write(new_content)
+        return True
+    except Exception:
+        return False
 
 def cleanup_raw_data(asset):
-    print(f"\n{C_BLUE}[Cleanup]{C_RESET} Removing raw data files for {asset.upper()}...")
+    print(f"{C_GRAY}[Cleanup] Removing raw CSV for {asset.upper()}...{C_RESET}")
     raw_dir = PROJECT_ROOT / "data" / "raw"
-    processed_dir = PROJECT_ROOT / "data" / "processed"
-    deleted_count = 0
-    for data_dir in [raw_dir, processed_dir]:
-        if data_dir.exists():
-            for file_path in data_dir.glob(f"*{asset}*"):
-                if file_path.is_file():
-                    file_path.unlink()
-                    deleted_count += 1
-    print(f"{C_GREEN}[Success]{C_RESET} Cleaned up {deleted_count} files.\n")
+    if raw_dir.exists():
+        for file_path in raw_dir.glob(f"*{asset.upper()}*"):
+            if file_path.is_file() and file_path.suffix == '.csv':
+                file_path.unlink()
 
-# ==========================================
-# ⭐️ เพิ่มระบบ Backtest & Save Results
-# ==========================================
 def run_backtest(asset):
-    print_header(f"BACKTESTING MODEL: {asset.upper()}")
-    
-    # สร้างโฟลเดอร์สำหรับเก็บผลลัพธ์ Backtest
+    print(f"\n{C_LIME}>>> BACKTESTING OUT-OF-SAMPLE: {asset.upper()}{C_RESET}")
     results_dir = PROJECT_ROOT / "results" / "backtests"
     results_dir.mkdir(parents=True, exist_ok=True)
     
-    step_name = f"Running Out-of-Sample Backtest for {asset.upper()}"
-    print(f"{C_BLUE}[Running]{C_RESET} {step_name}...")
-    
-    # ⭐️ ชี้เป้าไปที่ 03_run_backtest.py และส่ง --save_dir ไปด้วย
-    cmd = [
-        "python3", str(PROJECT_ROOT / "scripts" / "03_run_backtest.py"), 
-        "--pair", asset,
-        "--save_dir", str(results_dir) 
-    ]
-    
+    cmd = ["python3", str(PROJECT_ROOT / "scripts" / "03_run_backtest.py"), "--pair", asset, "--save_dir", str(results_dir)]
     try:
-        # ⭐️ เปิดระบบให้ทำงานจริงๆ (เอาของ Mock ทิ้งไป)
         subprocess.run(cmd, check=True)
-        print(f"{C_GREEN}[Success]{C_RESET} {step_name}")
-        print(f"{C_GREEN}[Saved]{C_RESET} Backtest results saved to: {results_dir}/backtest_{asset}.png")
-        time.sleep(1)
     except subprocess.CalledProcessError as e:
-        print(f"{C_RED}[Failed]{C_RESET} Backtest script crashed (Exit code: {e.returncode})")
-        sys.exit(1)
-    except Exception as e:
-        print(f"{C_RED}[Error]{C_RESET} System error during backtest: {e}")
-        sys.exit(1)
-
-def run_live_dashboard(asset):
-    print(f"\n{C_HEADER}--- DEPLOYMENT MODE ---{C_RESET}")
-    print("1. Sandbox (Demo/Testnet)")
-    print(f"2. {C_RED}LIVE (Real Money){C_RESET}")
+        print(f"{C_RED}[Failed] Backtest script crashed.{C_RESET}")
     
-    mode_choice = get_user_input("Select Deployment Mode (1 or 2)", valid_options=['1', '2'])
+    input(f"\n{C_GRAY}Press Enter to continue...{C_RESET}")
+
+def run_live_dashboard(selected_assets):
+    """รัน Dashboard สำหรับเหรียญที่เลือก พร้อมระบบ Fix Port"""
+    print(f"\n{C_LIME}>>> DEPLOYMENT MODE{C_RESET}")
+    print(f"  {C_WHITE}1. Sandbox (Demo/Testnet){C_RESET}")
+    print(f"  {C_RED}2. LIVE (Real Money){C_RESET}")
+    mode_choice = get_user_input("Select Mode (1 or 2)", valid_options=['1', '2'])
     mode = "sandbox" if mode_choice == '1' else "live"
-    
-    port_input = input(f"{C_YELLOW}Enter Port for Dashboard (Press Enter to use 8125):{C_RESET} ").strip()
-    port = port_input if port_input else "8125"
 
-    mode_text = f"{C_GREEN}SANDBOX{C_RESET}" if mode == "sandbox" else f"{C_RED}LIVE REAL MONEY{C_RESET}"
-    print(f"\n{C_BLUE}[Starting]{C_RESET} {mode_text} Dashboard for {asset.upper()} on port {port}...")
+    # สร้าง Dictionary สำหรับจับคู่ เหรียญ -> พอร์ต คงที่ (เริ่ม 8001)
+    port_mapping = {}
+    for idx, asset in enumerate(DEFAULT_ASSETS):
+        port_mapping[asset] = 8001 + idx
     
-    # ส่งพารามิเตอร์ --mode เข้าไปด้วย
-    deploy_cmd = [
-        "python3", str(PROJECT_ROOT / "scripts" / "07_live_real_money.py"), 
-        "--pair", asset, 
-        "--port", port,
-        "--mode", mode
-    ]
+    # สำหรับเหรียญแปลกๆ ที่ไม่อยู่ในลิสต์หลัก (เริ่ม 8090)
+    custom_port_start = 8090
+
+    print(f"\n{C_LIME}[Deploying Portfolio] Initializing {len(selected_assets)} assets...{C_RESET}")
     
+    # 1. รัน Bot แต่ละตัว
+    for asset in selected_assets:
+        if asset in port_mapping:
+            port = str(port_mapping[asset])
+        else:
+            port = str(custom_port_start)
+            custom_port_start += 1
+            
+        print(f"  {C_GREEN}✓{C_RESET} {asset.upper():<5} -> http://localhost:{port}")
+        subprocess.Popen(["python3", "scripts/07_live_real_money.py", "--pair", asset, "--port", port, "--mode", mode])
+    
+    # 2. รัน Master Portfolio Dashboard (ล็อกพอร์ต 8000)
+    # เราสามารถสั่งให้ Streamlit รันบนพอร์ตที่กำหนดได้ด้วย --server.port
+    print(f"\n{C_LIME}>>> Opening Master Portfolio Dashboard (http://localhost:8000)...{C_RESET}")
+    subprocess.Popen([
+        "python3", "-m", "streamlit", "run", "scripts/08_portfolio_dashboard.py", 
+        "--server.port", "8000"
+    ])
+
+    print(f"\n{C_YELLOW}💡 Tip: You can open your browser and go to:{C_RESET}")
+    print(f"   {C_WHITE}- Master Dashboard: {C_LIME}http://localhost:8000{C_RESET}")
+    for asset in selected_assets:
+        p = port_mapping.get(asset, "custom")
+        if p != "custom":
+            print(f"   {C_WHITE}- {asset.upper():<14}: {C_LIME}http://localhost:{p}{C_RESET}")
+
+    input(f"\n{C_GRAY}Deployment started. Press Enter to return to main menu...{C_RESET}")
+    
+def train_universal_model():
+    # 1. ใช้ระบบเลือกเมนูใหม่ที่คุณออกแบบไว้ (ดีมาก)
+    selected_assets = select_assets_menu("TRAIN UNIVERSAL MODEL")
+    
+    valid_assets = []
+    for asset in selected_assets:
+        config = load_regime_config(asset)
+        if config:
+            valid_assets.append(asset)
+        else:
+            print(f"{C_YELLOW}⚠️  Creating config for {asset.upper()}...{C_RESET}")
+            if auto_create_config(asset): 
+                valid_assets.append(asset)
+            else:
+                print(f"{C_RED}❌ Skipped {asset.upper()}{C_RESET}")
+
+    if not valid_assets: return
+
+    print(f"\n{C_LIME}[POOL] {', '.join([a.upper() for a in valid_assets])}{C_RESET}")
+    confirm = get_user_input("Start UNIVERSAL training? (y/n)", valid_options=['y', 'n'])
+    if confirm == 'n': return
+    
+    # --- [ส่วนที่เหลือคือ Pipeline การโหลดและเทรน (ของเดิม) ซึ่งโอเคแล้วครับ] ---
     try:
-        subprocess.run(deploy_cmd)
-    except KeyboardInterrupt:
-        print(f"\n{C_RED}[Stopped]{C_RESET} Dashboard system offline.")
-    sys.exit(0)
+        master_config = load_regime_config(valid_assets[0])
+        regimes_data = master_config.get('regimes', {})
+
+        print(f"\n{C_LIME}>>> [Step 1 & 2] Slicing Data & Features...{C_RESET}")
+        for regime_key, regime_info in regimes_data.items():
+            start_date = datetime.strptime(regime_info.get('start_date'), "%Y-%m-%d")
+            end_date = datetime.strptime(regime_info.get('end_date'), "%Y-%m-%d")
+            
+            total_days = (end_date - start_date).days + 1
+            days_per_asset = max(1, total_days // len(valid_assets)) 
+            
+            print(f"\n{C_DARK_GREEN}--- REGIME: {regime_key.upper()} ({total_days} days) ---{C_RESET}")
+            current_start = start_date
+            
+            for idx, asset in enumerate(valid_assets):
+                chunk_start = current_start
+                chunk_end = end_date if idx == len(valid_assets) - 1 else chunk_start + timedelta(days=days_per_asset - 1)
+                current_start = chunk_end + timedelta(days=1)
+                start_str, end_str = chunk_start.strftime("%Y-%m-%d"), chunk_end.strftime("%Y-%m-%d")
+                
+                # ⭐️ ระบบเช็คไฟล์ว่าเคยทำไปแล้วหรือยัง (Resume Feature)
+                feature_file = PROJECT_ROOT / "data" / "processed" / f"{asset.upper()}USDT_features_{regime_key}.parquet"
+                if feature_file.exists():
+                    print(f"{C_GRAY} ⏩ Skipped {asset.upper():<5} | Already processed {start_str} to {end_str}{C_RESET}")
+                    continue
+
+                print(f"{C_GREEN} ✓ {asset.upper():<5} {C_GRAY}| {start_str} to {end_str}{C_RESET}")
+                config_name = f"downloadData_{asset}.yaml"
+                subprocess.run(["python3", str(PROJECT_ROOT / "scripts" / "00_download_data.py"), "--config", config_name, "--override_regime", regime_key, "--override_start", start_str, "--override_end", end_str], check=True)
+                subprocess.run(["python3", str(PROJECT_ROOT / "scripts" / "01_build_dataset.py"), "--config", config_name, "--override_regime", regime_key], check=True)
+                cleanup_raw_data(asset)
+
+        print(f"\n{C_LIME}>>> [Step 3] Cross-Asset Pooling...{C_RESET}")
+        subprocess.run(["python3", str(PROJECT_ROOT / "scripts" / "01b_prepare_chunks.py")], check=True)
+
+        print(f"\n{C_LIME}>>> [Step 4] GA AS-Baseline Optimization...{C_RESET}")
+        ga_file = PROJECT_ROOT / "configs" / "ga_optimized_baseline.yaml"
+        if ga_file.exists():
+            reuse_ga = get_user_input(f"Found existing GA Baseline. Reuse it to save time? (y/n)", valid_options=['y', 'n'])
+            if reuse_ga == 'y':
+                print(f"{C_GRAY} ⏩ Skipped GA Optimization.{C_RESET}")
+            else:
+                subprocess.run(["python3", str(PROJECT_ROOT / "scripts" / "03b_optimize_ga.py")], check=True)
+        else:
+            subprocess.run(["python3", str(PROJECT_ROOT / "scripts" / "03b_optimize_ga.py")], check=True)
+
+        print(f"\n{C_LIME}>>> [Step 5] PPO Universal Training...{C_RESET}")
+        ppo_cmd = ["python3", str(PROJECT_ROOT / "scripts" / "04_train_chunked.py")]
+        latest_model = PROJECT_ROOT / "models" / "ppo_universal_hft_latest.zip"
+        if latest_model.exists():
+            resume_ppo = get_user_input(f"Found incomplete PPO Model. Resume training from checkpoint? (y/n)", valid_options=['y', 'n'])
+            if resume_ppo == 'y':
+                ppo_cmd.append("--resume")
+                
+        subprocess.run(ppo_cmd, check=True)
+
+        print(f"\n{C_LIME}✅ UNIVERSAL PIPELINE COMPLETED!{C_RESET}")
+        
+        do_bt = get_user_input("Run Out-of-Sample Backtest? (y/n)", valid_options=['y', 'n'])
+        if do_bt == 'y':
+            test_asset = input(f"{C_GREEN}▶ {C_WHITE}Asset to backtest (e.g., btc): {C_RESET}").strip().lower()
+            run_backtest(test_asset)
+
+    except Exception as e:
+        print(f"\n{C_RED}❌ Error: {e}{C_RESET}")
+        input(f"{C_GRAY}Press Enter to return...{C_RESET}")
 
 def main():
-    clear_screen()
-    print_header("HFT QUANT PIPELINE MANAGER")
+    while True:
+        clear_screen()
+        print_hft_logo()
+        
+        print(f"{C_LIME}SYSTEM COMMANDS:{C_RESET}")
+        print(f"  {C_GRAY}[1]{C_RESET} {C_WHITE}Deploy Dashboard (Single / Portfolio Overview){C_RESET}")
+        print(f"  {C_GRAY}[2]{C_RESET} {C_WHITE}Run Out-of-Sample Backtest{C_RESET}")
+        print(f"  {C_GRAY}[3]{C_RESET} {C_WHITE}Train UNIVERSAL Model (Multi-Asset Selection){C_RESET}")
+        print(f"  {C_GRAY}[0]{C_RESET} {C_GRAY}Exit System{C_RESET}\n")
+        
+        choice = get_user_input("Select Command (0-3)", valid_options=['1', '2', '3', '0'])
+        
+        if choice == '0': sys.exit(0)
 
-    models_dir = PROJECT_ROOT / "models"
-    models_dir.mkdir(exist_ok=True)
-    
-    model_files = list(models_dir.glob("ppo_*.zip"))
-    available_models = []
-    for f in model_files:
-        parts = f.stem.split('_')
-        if len(parts) >= 2:
-            available_models.append(parts[1].lower())
+        if choice == '1':
+            # ⭐️ ถามก่อนว่าดูเดี่ยวหรือดูภาพรวม
+            print(f"\n{C_WHITE}1. Single Asset View{C_RESET}")
+            print(f"{C_WHITE}2. Multi-Asset Portfolio Overview{C_RESET}")
+            sub_choice = get_user_input("Select View", valid_options=['1', '2'])
             
-    available_models = sorted(list(set(available_models)))
-    
-    print(f"{C_HEADER}--- AVAILABLE MODELS ---{C_RESET}")
-    if available_models:
-        for idx, m in enumerate(available_models, 1):
-            print(f"  {idx}. {C_GREEN}{m.upper()}{C_RESET}")
-    else:
-        print(f"  {C_YELLOW}No compiled models found in 'models/' directory.{C_RESET}")
-        
-    print(f"\n{C_HEADER}--- MAIN MENU ---{C_RESET}")
-    print("1. Deploy an Existing Model (Live Dashboard)")
-    print("2. Train a New Model (Fetch -> Train -> Backtest -> Deploy)")
-    print("3. Run Backtest on Existing Model") # ⭐️ เพิ่มเมนูที่ 3
-    
-    choice = get_user_input("Select Action (1, 2, or 3)", valid_options=['1', '2', '3'])
-    
-    # --- PATH 1: Deploy Existing ---
-    if choice == '1':
-        if not available_models:
-            print(f"{C_RED}[!] You have no models to deploy.{C_RESET}")
-            sys.exit(1)
-        valid_selections = [str(i) for i in range(1, len(available_models) + 1)] + available_models
-        user_sel = get_user_input(f"Select model to deploy", valid_options=valid_selections)
-        deploy_target = available_models[int(user_sel) - 1] if user_sel.isdigit() else user_sel
-        run_live_dashboard(deploy_target)
+            if sub_choice == '1':
+                asset = input(f"{C_GREEN}▶ {C_WHITE}Enter Asset Name: {C_RESET}").strip().lower()
+                if asset: run_live_dashboard([asset])
+            else:
+                selected = select_assets_menu("PORTFOLIO OVERVIEW SETUP")
+                run_live_dashboard(selected)
 
-    # --- PATH 3: Backtest Only ---
-    elif choice == '3':
-        if not available_models:
-            print(f"{C_RED}[!] You have no models to backtest.{C_RESET}")
-            sys.exit(1)
-        valid_selections = [str(i) for i in range(1, len(available_models) + 1)] + available_models
-        user_sel = get_user_input(f"Select model to backtest", valid_options=valid_selections)
-        backtest_target = available_models[int(user_sel) - 1] if user_sel.isdigit() else user_sel
-        run_backtest(backtest_target)
-        sys.exit(0)
-
-    # --- PATH 2: Train New Model ---
-    print_header("NEW MODEL PIPELINE")
-    asset = get_user_input("Select Asset (e.g. btc, eth, bnb)", cast_type=str)
-    if asset in available_models:
-        print(f"{C_YELLOW}[!] Notice: A model for {asset.upper()} already exists. It will be overwritten.{C_RESET}")
-        
-    timeframe = get_user_input("Timeframe in days (15, 30, 45, 60)", valid_options=[15, 30, 45, 60], cast_type=int)
-    
-    print(f"\n{C_HEADER}--- 2. MARKET REGIMES CONFIGURATION ---{C_RESET}")
-    regimes_config = {}
-    for regime in ["Mean-Reverting", "Trending", "High Volatility"]:
-        print(f"{C_BLUE}>> Regime: {regime}{C_RESET}")
-        start, end = get_date_input(regime, timeframe)
-        regimes_config[regime.lower().replace(" ", "_").replace("-", "_")] = {'start': start, 'end': end}
-        print(f"   End Date: {C_GREEN}{end}{C_RESET}\n")
-    
-    confirm = get_user_input("Confirm setup and start training process? (y/n)", valid_options=['y', 'n'])
-    if confirm == 'n': sys.exit(0)
-
-    print_header("DATA PREPARATION & MODEL TRAINING")
-    for regime, dates in regimes_config.items():
-        step_name = f"Downloading {regime.upper()} data ({dates['start']} to {dates['end']})"
-        # subprocess.run(["python3", "scripts/download_data.py", ...])
-        print(f"{C_GREEN}[Mock Success]{C_RESET} {step_name}")
-        time.sleep(0.5)
-
-    step_name = f"Training PPO Model for {asset.upper()}"
-    # subprocess.run(["python3", "scripts/train_model.py", "--pair", asset])
-    print(f"{C_GREEN}[Mock Success]{C_RESET} {step_name}.")
-    time.sleep(0.5)
-
-    cleanup_raw_data(asset)
-
-    # ⭐️ 1.5 BACKTESTING PHASE (แทรกก่อนขึ้น Live)
-    run_backtest(asset)
-
-    print_header("TRAINING & BACKTEST COMPLETE")
-    start_live = get_user_input(f"Do you want to start the Live Dashboard for {asset.upper()} now? (y/n)", valid_options=['y', 'n'])
-    if start_live == 'y':
-        run_live_dashboard(asset)
-    else:
-        print(f"{C_GREEN}[Done]{C_RESET} Exiting pipeline.")
+        elif choice == '2':
+            asset = input(f"{C_GREEN}▶ {C_WHITE}Asset to Backtest: {C_RESET}").strip().lower()
+            # run_backtest(asset)
+        elif choice == '3':
+            train_universal_model()
 
 if __name__ == "__main__":
     main()

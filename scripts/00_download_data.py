@@ -105,9 +105,13 @@ def process_regime_to_csv(asset: str, regime_name: str, start_date: str, end_dat
 # 🚀 3. Main Pipeline
 # ==========================================
 def main():
-    # อนุญาตให้รับชื่อไฟล์ Config หรือ Asset ผ่าน Terminal ได้ (เผื่ออนาคต)
     parser = argparse.ArgumentParser(description="Download Historical Data from Binance")
     parser.add_argument("--config", type=str, default="downloadData.yaml", help="ชื่อไฟล์ Config")
+    
+    # ⭐️ เพิ่ม Arguments สำหรับ Sparse Asset Rotation
+    parser.add_argument("--override_regime", type=str, default=None, help="ชื่อ Regime ที่บังคับรัน")
+    parser.add_argument("--override_start", type=str, default=None, help="บังคับวันที่เริ่มต้น (YYYY-MM-DD)")
+    parser.add_argument("--override_end", type=str, default=None, help="บังคับวันที่สิ้นสุด (YYYY-MM-DD)")
     args = parser.parse_args()
 
     config_path = PROJECT_ROOT / "configs" / args.config
@@ -118,16 +122,21 @@ def main():
 
     config = load_config(str(config_path))
     asset = config.get("asset", "BTCUSDT")
-    regimes = config.get("regimes", {})
 
-    print(f"🚀 เริ่มต้น Data Pipeline สำหรับเหรียญ: {asset}")
-    
-    for regime_name, details in regimes.items():
-        start_date = details['start_date']
-        end_date = details['end_date']
-        process_regime_to_csv(asset, regime_name, start_date, end_date)
+    # ⭐️ ถ้าระบบหลักส่งค่า Override มาให้ทำแค่ส่วนที่โดนส่งมา (Time-Slicing)
+    if args.override_regime and args.override_start and args.override_end:
+        print(f"🚀 เริ่มดาวน์โหลด [Sliced Chunk] เหรียญ {asset} | {args.override_start} ถึง {args.override_end}")
+        process_regime_to_csv(asset, args.override_regime, args.override_start, args.override_end)
+    else:
+        # ถ้ารันมือปกติ ก็ดึงข้อมูลตามไฟล์ YAML เหมาเข่งเหมือนเดิม
+        regimes = config.get("regimes", {})
+        print(f"🚀 เริ่มต้น Data Pipeline เหมาเข่งสำหรับเหรียญ: {asset}")
+        for regime_name, details in regimes.items():
+            start_date = details['start_date']
+            end_date = details['end_date']
+            process_regime_to_csv(asset, regime_name, start_date, end_date)
 
-    print("✅✅✅ Data Download & Processing Complete! ✅✅✅")
+    print("✅✅✅ Data Download Complete! ✅✅✅")
 
 if __name__ == "__main__":
     main()
