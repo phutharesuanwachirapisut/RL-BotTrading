@@ -2,10 +2,11 @@ import os
 import sys
 import time
 import subprocess
+import json
 import yaml
 from pathlib import Path
 from datetime import datetime, timedelta
-
+import webbrowser
 PROJECT_ROOT = Path(__file__).resolve().parent
 
 # ==========================================
@@ -27,7 +28,6 @@ def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')
 
 def print_hft_logo():
-    """พิมพ์โลโก้ HFT แบบ ASCII Art ด้วยโทนสีเขียว"""
     logo = f"""
 {C_DARK_GREEN}██╗  ██╗{C_GREEN}███████╗{C_LIME}████████╗
 {C_DARK_GREEN}██║  ██║{C_GREEN}██╔════╝{C_LIME}╚══██╔══╝
@@ -41,11 +41,20 @@ def print_hft_logo():
     print(f"{C_WHITE} QUANTITATIVE DEPLOYMENT & EVALUATION MANAGER (v3.0){C_RESET}")
     print(f"{C_GRAY}======================================================{C_RESET}\n")
 
-def get_user_input(prompt, valid_options=None, cast_type=str):
+# แก้ไขฟังก์ชันนี้
+def get_user_input(prompt, valid_options=None, cast_type=str, default=None):
     while True:
         try:
-            user_input = input(f"{C_GREEN}▶ {C_WHITE}{prompt}: {C_RESET}").strip().lower()
+            # เพิ่มการแสดงผล default ในวงเล็บถ้ามี
+            display_prompt = f"{prompt} [{default}]" if default else prompt
+            user_input = input(f"{C_GREEN}▶ {C_WHITE}{display_prompt}: {C_RESET}").strip().lower()
+            
+            # ถ้าผู้ใช้กด Enter เปล่าๆ และมีการตั้ง default ไว้
+            if not user_input and default is not None:
+                return default
+                
             if not user_input: return ""
+            
             value = cast_type(user_input)
             if valid_options and value not in valid_options:
                 print(f"{C_RED}[!] Please choose from: {valid_options}{C_RESET}")
@@ -87,19 +96,83 @@ def load_regime_config(asset):
     return yaml.safe_load(open(config_path)) if config_path.exists() else None
 
 def auto_create_config(asset, template_asset="btc"):
-    template_path = PROJECT_ROOT / "configs" / f"downloadData_{template_asset}.yaml"
-    new_config_path = PROJECT_ROOT / "configs" / f"downloadData_{asset}.yaml"
-    if not template_path.exists(): return False
-    try:
-        with open(template_path, 'r', encoding='utf-8') as f:
-            template_content = f.read()
-        new_content = template_content.replace(f'asset: "{template_asset.upper()}USDT"', f'asset: "{asset.upper()}USDT"')
-        new_config_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(new_config_path, 'w', encoding='utf-8') as f:
-            f.write(new_content)
-        return True
-    except Exception:
-        return False
+    """Automatically generates ALL required config files for a new asset."""
+    success = True
+    config_types = [
+        (f"downloadData_{template_asset}.yaml", f"downloadData_{asset}.yaml"),
+        (f"{template_asset}_hyperparameters.yaml", f"{asset}_hyperparameters.yaml"),
+        (f"{template_asset}_trading_env.yaml", f"{asset}_trading_env.yaml")
+    ]
+    
+    for template_name, new_name in config_types:
+        template_path = PROJECT_ROOT / "configs" / template_name
+        
+        # ⭐️ บางครั้งไฟล์ downloadData อาจจะเผลอไปอยู่ที่ Root Directory ให้ดักทางไว้ด้วย
+        if not template_path.exists() and (PROJECT_ROOT / template_name).exists():
+            template_path = PROJECT_ROOT / template_name
+            
+        new_config_path = PROJECT_ROOT / "configs" / new_name
+        
+        if not template_path.exists():
+            print(f"{C_RED}❌ Error: Template file {template_name} missing.{C_RESET}")
+            success = False
+            continue
+            
+        if not new_config_path.exists():
+            try:
+                with open(template_path, 'r', encoding='utf-8') as f:
+                    template_content = f.read()
+                
+                # Replace the symbol naming conventions inside the file
+                new_content = template_content.replace(f'"{template_asset.upper()}USDT"', f'"{asset.upper()}USDT"')
+                new_content = new_content.replace(f"'{template_asset.upper()}/USDT'", f"'{asset.upper()}/USDT'")
+                new_content = new_content.replace(f'symbol: "{template_asset.upper()}/USDT:USDT"', f'symbol: "{asset.upper()}/USDT:USDT"')
+                
+                new_config_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(new_config_path, 'w', encoding='utf-8') as f:
+                    f.write(new_content)
+                print(f"{C_GRAY}  [+] Generated {new_name}{C_RESET}")
+            except Exception as e:
+                print(f"{C_RED}❌ Error generating {new_name}: {e}{C_RESET}")
+                success = False
+                
+    return success
+
+
+def get_single_asset_port(asset):
+    """ระบบความจำ: ดึงหรือสร้าง Port เฉพาะสำหรับแต่ละเหรียญในโหมด Single"""
+    registry_file = PROJECT_ROOT / "configs" / "single_port_registry.json"
+    
+    # ค่าเริ่มต้นตามที่คุณต้องการ
+    registry = {
+        "btc": 8001,
+        "eth": 8002,
+        "bnb": 8003,
+        "xrp": 8004,
+        "ltc": 8005,
+        "ada": 8006
+    }
+    
+    # โหลดไฟล์ความจำเก่ามาผสาน (ถ้ามี)
+    if registry_file.exists():
+        try:
+            with open(registry_file, 'r') as f:
+                saved_registry = json.load(f)
+                registry.update(saved_registry)
+        except Exception:
+            pass
+            
+    # ถ้าเป็นเหรียญใหม่ที่ไม่เคยรู้จัก ให้หาพอร์ตที่ว่างถัดไป
+    if asset not in registry:
+        next_port = max(registry.values()) + 1
+        registry[asset] = next_port
+        
+    # เซฟความจำกลับลงไฟล์
+    registry_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(registry_file, 'w') as f:
+        json.dump(registry, f, indent=4)
+        
+    return str(registry[asset])
 
 def cleanup_raw_data(asset):
     print(f"{C_GRAY}[Cleanup] Removing raw CSV for {asset.upper()}...{C_RESET}")
@@ -122,7 +195,7 @@ def run_backtest(asset):
     
     input(f"\n{C_GRAY}Press Enter to continue...{C_RESET}")
 
-def run_live_dashboard(selected_assets):
+def run_live_dashboard(selected_assets, view_choice):
     """รัน Dashboard สำหรับเหรียญที่เลือก พร้อมระบบ Fix Port"""
     print(f"\n{C_LIME}>>> DEPLOYMENT MODE{C_RESET}")
     print(f"  {C_WHITE}1. Sandbox (Demo/Testnet){C_RESET}")
@@ -130,44 +203,73 @@ def run_live_dashboard(selected_assets):
     mode_choice = get_user_input("Select Mode (1 or 2)", valid_options=['1', '2'])
     mode = "sandbox" if mode_choice == '1' else "live"
 
-    # สร้าง Dictionary สำหรับจับคู่ เหรียญ -> พอร์ต คงที่ (เริ่ม 8001)
-    port_mapping = {}
-    for idx, asset in enumerate(DEFAULT_ASSETS):
-        port_mapping[asset] = 8001 + idx
-    
-    # สำหรับเหรียญแปลกๆ ที่ไม่อยู่ในลิสต์หลัก (เริ่ม 8090)
-    custom_port_start = 8090
-
-    print(f"\n{C_LIME}[Deploying Portfolio] Initializing {len(selected_assets)} assets...{C_RESET}")
-    
-    # 1. รัน Bot แต่ละตัว
-    for asset in selected_assets:
-        if asset in port_mapping:
-            port = str(port_mapping[asset])
-        else:
-            port = str(custom_port_start)
-            custom_port_start += 1
-            
-        print(f"  {C_GREEN}✓{C_RESET} {asset.upper():<5} -> http://localhost:{port}")
+    # ==========================================
+    # กรณี 1: เปิดแบบ Single Asset (เปิด HTML Dashboard ล้ำๆ)
+    # ==========================================
+    if view_choice == '1':
+        asset = selected_assets[0]
+        port = get_single_asset_port(asset) # ⭐️ ดึงพอร์ตจากระบบความจำ
+        
+        print(f"\n{C_LIME}[Deploying Single Bot] Initializing {asset.upper()} on port {port}...{C_RESET}")
+        
+        # รันบอท (มันจะรัน FastAPI server ที่เสิร์ฟไฟล์ dashboard.html ด้วย)
         subprocess.Popen(["python3", "scripts/07_live_real_money.py", "--pair", asset, "--port", port, "--mode", mode])
-    
-    # 2. รัน Master Portfolio Dashboard (ล็อกพอร์ต 8000)
-    # เราสามารถสั่งให้ Streamlit รันบนพอร์ตที่กำหนดได้ด้วย --server.port
-    print(f"\n{C_LIME}>>> Opening Master Portfolio Dashboard (http://localhost:8000)...{C_RESET}")
-    subprocess.Popen([
-        "python3", "-m", "streamlit", "run", "scripts/08_portfolio_dashboard.py", 
-        "--server.port", "8000"
-    ])
+        
+        time.sleep(3) # ให้เวลาเซิร์ฟเวอร์เปิดแป๊บนึง
+        url = f"http://localhost:{port}"
+        print(f"\n{C_YELLOW}💡 Tip: Opening your browser directly to the High-Tech Dashboard...{C_RESET}")
+        print(f"   {C_WHITE}-> {C_LIME}{url}{C_RESET}")
+        
+        # สั่งเปิดเบราว์เซอร์ให้อัตโนมัติ
+        webbrowser.open(url)
 
-    print(f"\n{C_YELLOW}💡 Tip: You can open your browser and go to:{C_RESET}")
-    print(f"   {C_WHITE}- Master Dashboard: {C_LIME}http://localhost:8000{C_RESET}")
-    for asset in selected_assets:
-        p = port_mapping.get(asset, "custom")
-        if p != "custom":
-            print(f"   {C_WHITE}- {asset.upper():<14}: {C_LIME}http://localhost:{p}{C_RESET}")
+    # ==========================================
+    # กรณี 2: เปิดแบบ Multi-Asset (เปิด Streamlit Command Center)
+    # ==========================================
+    # ==========================================
+    # กรณี 2: เปิดแบบ Multi-Asset (เปิด Streamlit Command Center)
+    # ==========================================
+    else:
+        port_mapping = {}
+        for idx, asset in enumerate(DEFAULT_ASSETS):
+            port_mapping[asset] = 8001 + idx
+        
+        custom_port_start = 8090
 
-    input(f"\n{C_GRAY}Deployment started. Press Enter to return to main menu...{C_RESET}")
-    
+        print(f"\n{C_LIME}[Deploying Portfolio] Initializing {len(selected_assets)} assets...{C_RESET}")
+        
+        # ⭐️ ADD THIS BLOCK: Verify BOTH configs exist before deploying
+        valid_assets_to_deploy = []
+        for asset in selected_assets:
+            env_file = PROJECT_ROOT / "configs" / f"{asset}_trading_env.yaml"
+            hyper_file = PROJECT_ROOT / "configs" / f"{asset}_hyperparameters.yaml"
+            
+            # ถ้าขาดไฟล์ใดไฟล์หนึ่งไป (เช่นมี env แต่ไม่มี hyper) ให้รัน Auto-generate ซ่อมแซมทันที
+            if not env_file.exists() or not hyper_file.exists():
+                print(f"{C_YELLOW}⚠️  Missing configs for {asset.upper()}. Auto-generating from BTC template...{C_RESET}")
+                if auto_create_config(asset):
+                    valid_assets_to_deploy.append(asset)
+                else:
+                    print(f"{C_RED}❌ Failed to configure {asset.upper()}. Skipping deployment.{C_RESET}")
+            else:
+                valid_assets_to_deploy.append(asset)
+        
+        # นำเหรียญที่ไฟล์ครบถ้วนแล้วมา Deploy
+        for asset in valid_assets_to_deploy:
+            if asset in port_mapping:
+                port = str(port_mapping[asset])
+            else:
+                port = str(custom_port_start)
+                custom_port_start += 1
+                
+            print(f"  {C_GREEN}✓{C_RESET} {asset.upper():<5} -> http://localhost:{port}")
+            subprocess.Popen(["python3", "scripts/07_live_real_money.py", "--pair", asset, "--port", port, "--mode", mode])
+            
+        time.sleep(5) # ให้เวลาเซิร์ฟเวอร์เปิด
+        webbrowser.open("http://localhost:8000")
+
+    input(f"\n{C_GRAY}Deployment started. Bots are running in the background. Press Enter to return to main menu...{C_RESET}")
+
 def train_universal_model():
     # 1. ใช้ระบบเลือกเมนูใหม่ที่คุณออกแบบไว้ (ดีมาก)
     selected_assets = select_assets_menu("TRAIN UNIVERSAL MODEL")
@@ -230,7 +332,7 @@ def train_universal_model():
         print(f"\n{C_LIME}>>> [Step 4] GA AS-Baseline Optimization...{C_RESET}")
         ga_file = PROJECT_ROOT / "configs" / "ga_optimized_baseline.yaml"
         if ga_file.exists():
-            reuse_ga = get_user_input(f"Found existing GA Baseline. Reuse it to save time? (y/n)", valid_options=['y', 'n'])
+            reuse_ga = get_user_input(f"Found existing GA Baseline. Reuse it for this time? (y/n)", valid_options=['y', 'n'], default='y')
             if reuse_ga == 'y':
                 print(f"{C_GRAY} ⏩ Skipped GA Optimization.{C_RESET}")
             else:
@@ -242,9 +344,11 @@ def train_universal_model():
         ppo_cmd = ["python3", str(PROJECT_ROOT / "scripts" / "04_train_chunked.py")]
         latest_model = PROJECT_ROOT / "models" / "ppo_universal_hft_latest.zip"
         if latest_model.exists():
-            resume_ppo = get_user_input(f"Found incomplete PPO Model. Resume training from checkpoint? (y/n)", valid_options=['y', 'n'])
+            # ⭐️ เพิ่ม default='y' ตรงนี้
+            resume_ppo = get_user_input(f"Found incomplete PPO Model. Resume training from checkpoint? (y/n)", valid_options=['y', 'n'], default='y')
             if resume_ppo == 'y':
                 ppo_cmd.append("--resume")
+
                 
         subprocess.run(ppo_cmd, check=True)
 
@@ -282,14 +386,21 @@ def main():
             
             if sub_choice == '1':
                 asset = input(f"{C_GREEN}▶ {C_WHITE}Enter Asset Name: {C_RESET}").strip().lower()
-                if asset: run_live_dashboard([asset])
+                # ❌ This is the line causing the error:
+                # if asset: run_live_dashboard([asset])
+                
+                # ✅ Change it to include sub_choice:
+                if asset: run_live_dashboard([asset], sub_choice)
             else:
                 selected = select_assets_menu("PORTFOLIO OVERVIEW SETUP")
-                run_live_dashboard(selected)
-
+                # ❌ This is also missing the second argument:
+                # run_live_dashboard(selected)
+                
+                # ✅ Change it to include sub_choice:
+                run_live_dashboard(selected, sub_choice)
         elif choice == '2':
             asset = input(f"{C_GREEN}▶ {C_WHITE}Asset to Backtest: {C_RESET}").strip().lower()
-            # run_backtest(asset)
+            run_backtest(asset)
         elif choice == '3':
             train_universal_model()
 

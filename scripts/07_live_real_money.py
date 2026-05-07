@@ -8,6 +8,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 import ccxt.async_support as ccxt
 import numpy as np
+import math
 from pathlib import Path
 from datetime import datetime
 import sys
@@ -28,7 +29,7 @@ BOT_STATE = {
     "symbol": "--",
     "mid_price": 0.0, "inventory": 0.0, "max_inventory": 0.0, 
     "pos_cost": 0.0, "pnl_pct": 0.0, "pnl": 0.0, "gross_pnl": 0.0,
-    "realized_pnl": 0.0, "est_fees": 0.0,  # <--- เช็คว่ามี realized_pnl อยู่ตรงนี้
+    "realized_pnl": 0.0, "est_fees": 0.0,  
     "roc_pct": 0.0, "bid_dist": 0.0, "ask_dist": 0.0,
     "spread": 0.0, "skew": 0.0, "volatility": 0.0, "bid": 0.0, "ask": 0.0,
     "action": [0.0, 0.0], "tfi": 0.0, "vpin": 0.0, 
@@ -112,12 +113,13 @@ async def dashboard_trading_loop(bot: ProductionMarketMaker):
                 import random
                 BOT_STATE["latency_ping"] = random.randint(15, 35) 
                 
-                if len(bot.frames) == 0:
-                    for _ in range(bot.stack_size):
-                        bot.frames.append(live_features)
-                else:
-                    bot.frames.append(live_features)
-                    
+                # ⭐️ 4. จัดการ Frame Stack ให้ได้ขนาดเป๊ะๆ 60 (10 ก้าว x 6 ฟีเจอร์)
+                # เพื่อป้องกันบั๊ก Shape Mismatch เราจะเช็คความยาวและอัดข้อมูลให้เต็มเสมอ
+                while len(bot.frames) < bot.stack_size:
+                    bot.frames.append(live_features) # ถ้าคิวยังไม่เต็ม 10 ให้ปั๊มข้อมูลล่าสุดเข้าไป
+
+                bot.frames.append(live_features) # เติมของใหม่เข้าไป 1 (ของเก่าสุดจะร่วงออกไปเองเพราะเป็น deque)
+                
                 obs = np.concatenate(list(bot.frames))
                 action, _ = bot.model.predict(obs, deterministic=True)
                 
@@ -127,7 +129,45 @@ async def dashboard_trading_loop(bot: ProductionMarketMaker):
                 
                 # ยิงออเดอร์
                 BOT_STATE["_total_quotes"] += 2
-                await bot.execute_orders(my_bid, my_ask)
+                
+                # ⭐️ คำนวณ Size และใช้ CCXT จัดการ Precision ให้ปลอดภัย 100%
+                target_notional_usd = 105.0
+                min_required_size = target_notional_usd / my_bid
+                
+                # หาค่ามากสุดระหว่าง Size ขั้นต่ำที่ตั้งไว้ กับ Size ที่คำนวณได้
+                raw_size = max(bot.order_size, min_required_size)
+                
+                # ให้ CCXT แปลงเป็นฟอร์แมตทศนิยมที่ Binance ยอมรับเป๊ะๆ (คืนค่าเป็น String)
+                formatted_size_str = bot.exchange.amount_to_precision(bot.symbol, raw_size)
+                
+                # แปลงกลับเป็น float เพื่อนำไปใช้ยิงออเดอร์ต่อไป
+                dynamic_size = float(formatted_size_str)
+                
+                # We need to temporarily patch bot.execute_orders to accept dynamic_size if it doesn't already.
+                # Assuming execute_orders inside ProductionMarketMaker calculates dynamic size internally. 
+                # Let's override it momentarily.
+                
+                bid_diff = abs(my_bid - bot.current_open_bid)
+                ask_diff = abs(my_ask - bot.current_open_ask)
+                
+                if bid_diff >= bot.order_update_threshold or ask_diff >= bot.order_update_threshold:
+                    await bot.exchange.cancel_all_orders(bot.symbol)
+                    
+                    orders_to_create = []
+                    if bot.inventory < bot.max_inventory:
+                        orders_to_create.append(bot.exchange.create_limit_buy_order(bot.symbol, dynamic_size, my_bid))
+                    
+                    if bot.inventory > -bot.max_inventory:
+                        orders_to_create.append(bot.exchange.create_limit_sell_order(bot.symbol, dynamic_size, my_ask))
+                        
+                    if orders_to_create:
+                        await asyncio.gather(*orders_to_create)
+                        
+                    bot.current_open_bid = my_bid
+                    bot.current_open_ask = my_ask
+                    base_coin = bot.symbol.split('/')[0]
+                    print(f"🔫 [Executed] Size: {dynamic_size:.3f} {base_coin} | Bid: {my_bid:.2f} | Ask: {my_ask:.2f}")
+
                 
                 BOT_STATE["latency_t2t"] = (time.perf_counter() - t2t_start) * 1000
 
@@ -153,7 +193,6 @@ async def dashboard_trading_loop(bot: ProductionMarketMaker):
                             exec_price = entry_price if entry_price > 0 else mid_price
                             notional_value = qty * exec_price
                             
-                            # [โค้ดคำนวณ Fee เดิม...]
                             if getattr(app.state, 'is_emergency_flattening', False):
                                 current_trade_fee = notional_value * TAKER_FEE_RATE
                                 is_maker = False
@@ -236,7 +275,7 @@ async def dashboard_trading_loop(bot: ProductionMarketMaker):
                     "max_inventory": float(bot.max_inventory), "pos_cost": float(pos_cost),
                     "pnl_pct": float(pnl_pct), "pnl": float(net_pnl), 
                     "gross_pnl": float(gross_pnl), 
-                    "est_fees": float(BOT_STATE["est_fees"]), # <--- ⭐️ แก้ไขตรงนี้ครับ
+                    "est_fees": float(BOT_STATE["est_fees"]), 
                     "roc_pct": float(roc_pct), "bid_dist": float(bid_dist), "ask_dist": float(ask_dist),
                     "spread": float(my_ask - my_bid), "skew": float(action[1] * bot.max_skew_usd),
                     "bid": float(my_bid), "ask": float(my_ask),
@@ -289,7 +328,16 @@ async def main():
 
     CONFIG_PATH = PROJECT_ROOT / "configs" / f"{pair_name}_hyperparameters.yaml"
     TRADING_ENV_PATH = PROJECT_ROOT / "configs" / f"{pair_name}_trading_env.yaml"
-    MODEL_PATH = PROJECT_ROOT / "models" / f"ppo_{pair_name}_chunked_final.zip"
+    MODEL_PATH_FINAL = PROJECT_ROOT / "models" / "ppo_universal_hft_final.zip"
+    MODEL_PATH_LATEST = PROJECT_ROOT / "models" / "ppo_universal_hft_latest.zip"
+    
+    if MODEL_PATH_FINAL.exists():
+        MODEL_PATH = MODEL_PATH_FINAL
+    elif MODEL_PATH_LATEST.exists():
+        MODEL_PATH = MODEL_PATH_LATEST
+    else:
+        print(f"❌ [Error] Could not find the Universal Model. Please run Training (Step 3) first.")
+        sys.exit(1)
     
     hyper_config = load_config(str(CONFIG_PATH))
     trading_config = load_config(str(TRADING_ENV_PATH))

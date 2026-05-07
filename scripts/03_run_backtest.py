@@ -1,4 +1,5 @@
 import os
+import glob
 import torch
 import argparse
 import numpy as np
@@ -23,51 +24,47 @@ def load_config(yaml_path: str) -> dict:
         return yaml.safe_load(file)
 
 def calculate_risk_metrics(pnl_history):
-    """คำนวณ Sharpe Ratio และ Sortino Ratio จาก PnL แบบ Step-by-step"""
     if len(pnl_history) < 2: return 0.0, 0.0
-    
-    # หารายได้ที่เกิดขึ้นในแต่ละ Step (Returns)
     returns = np.diff(pnl_history)
     mean_return = np.mean(returns)
     std_return = np.std(returns)
-    
-    # หาความผันผวนเฉพาะขาลง (Downside Deviation)
     negative_returns = returns[returns < 0]
     downside_std = np.std(negative_returns) if len(negative_returns) > 0 else 1e-8
-    
-    # ปรับสเกลเป็นรายวัน/รายปีโดยประมาณ (สมมติ 10,000 steps = 1 period)
     scaling_factor = np.sqrt(10000) 
-    
     sharpe_ratio = (mean_return / (std_return + 1e-8)) * scaling_factor
     sortino_ratio = (mean_return / (downside_std + 1e-8)) * scaling_factor
-    
     return sharpe_ratio, sortino_ratio
 
-def load_testset_data(pair_name: str, config: dict) -> np.ndarray:
-    """โหลดข้อมูลเฉพาะส่วนของ Test Set (Out-of-Sample) ตามที่ระบุใน YAML"""
-    # หาคีย์ของ Test set ในไฟล์ YAML
-    test_set_keys = list(config.get("test_set", {}).keys())
-    if not test_set_keys:
-        print("⚠️ ไม่พบข้อมูล 'test_set' ในไฟล์ YAML จะพยายามโหลดจากไฟล์ Test ทั่วไปแทน")
-        test_regime = "unseen_2022"
-    else:
-        test_regime = test_set_keys[0]
-
-    # ดึงไฟล์ที่ผ่านการ Normalize แล้ว
-    DATA_PATH = PROJECT_ROOT / "data" / "processed" / f"{pair_name.upper()}USDT_features_{test_regime}.parquet"
+def load_testset_data(pair_name: str) -> np.ndarray:
+    """โหลดข้อมูลของเหรียญนั้นๆ และดึง 20% สุดท้ายมาเป็นข้อสอบ (Out-of-Sample)"""
+    DATA_DIR = PROJECT_ROOT / "data" / "processed"
     
-    if not os.path.exists(DATA_PATH):
-        print(f"❌ Error: ไม่พบไฟล์ Out-of-Sample Test Set: {DATA_PATH}")
+    # ดึงไฟล์ Feature ปกติของเหรียญนั้นๆ
+    potential_files = glob.glob(str(DATA_DIR / f"{pair_name.upper()}USDT_features*.parquet"))
+    
+    if not potential_files:
+        print(f"❌ Error: ไม่พบไฟล์ข้อมูลสำหรับ {pair_name.upper()} ในโฟลเดอร์ data/processed/")
         sys.exit(1)
-
-    print(f"📥 Loading Unseen Test Set: {DATA_PATH.name}")
-    df = pl.read_parquet(str(DATA_PATH))
+        
+    DATA_PATH = Path(potential_files[0]) # ใช้ไฟล์แรกที่เจอ
+    print(f"📥 Loading Data for Test: {DATA_PATH.name}")
     
-    # ดึงคอลัมน์ Feature ที่ตรงกับ Env ของเรา
+    df = pl.read_parquet(str(DATA_PATH))
     feature_cols = ["price", "quantity", "returns_pct_norm", "volatility_norm", "tfi_norm", "rsi_norm", "macd_raw_norm"]
     available_cols = [c for c in feature_cols if c in df.columns]
     
-    return df.select(available_cols).to_numpy().astype(np.float32)
+    raw_np = df.select(available_cols).to_numpy().astype(np.float32)
+    
+    # ⭐️ 1. ใส่เกราะป้องกันข้อมูล (ต้องเหมือนตอน Train เป๊ะ!)
+    raw_np = np.nan_to_num(raw_np, nan=0.0, posinf=0.0, neginf=0.0)
+    raw_np = np.clip(raw_np, -10.0, 10.0)
+    
+    # ⭐️ 2. ตัดข้อมูล 10,000 แถวสุดท้ายมาเป็น Out-of-Sample Test
+    test_size = min(10000, len(raw_np) // 5) 
+    test_np = raw_np[-test_size:]
+    
+    print(f"✂️ Sliced last {test_size} steps for Out-of-Sample Testing.")
+    return np.ascontiguousarray(test_np)
 
 def main():
     parser = argparse.ArgumentParser(description="Out-of-Sample Backtest Evaluation")
@@ -77,35 +74,45 @@ def main():
     
     pair_name = args.pair.lower()
 
-    # 1. โหลด Configurations
-    DATA_CONFIG_PATH = PROJECT_ROOT / "configs" / f"downloadData_{pair_name}.yaml"
-    data_config = load_config(str(DATA_CONFIG_PATH)) if os.path.exists(DATA_CONFIG_PATH) else {}
-    
+    # 1. โหลด Configurations (Environment)
     ENV_PATH = PROJECT_ROOT / "configs" / f"{pair_name}_trading_env.yaml"
+    if not os.path.exists(ENV_PATH):
+        print(f"❌ Error: ไม่พบไฟล์ {ENV_PATH}")
+        sys.exit(1)
+        
     env_config = load_config(str(ENV_PATH))
+    
+    # ⭐️ 3. ดึง GA Baseline มาผสาน (เพื่อให้ Env ในห้องสอบเหมือนห้องเรียน)
+    GA_PATH = PROJECT_ROOT / "configs" / "ga_optimized_baseline.yaml"
+    if os.path.exists(GA_PATH):
+        ga_config = load_config(str(GA_PATH)).get("ga_optimized_env", {})
+        env_config.update(ga_config)
+        print(f"🧬 Applied GA Baseline: {ga_config}")
+        
     print(f"⚙️ Loaded Trading Env Config for {pair_name.upper()}")
 
     # 2. โหลด Model
-    # พยายามหาไฟล์ model ล่าสุด
-    MODEL_PATH = PROJECT_ROOT / "models" / f"ppo_{pair_name}_chunked_final.zip"
-    if not os.path.exists(MODEL_PATH):
-        MODEL_PATH = PROJECT_ROOT / "models" / f"ppo_universal_hft_final.zip" # Fallback ไปหา Universal model
-        
-    if not os.path.exists(MODEL_PATH):
-        print(f"❌ Error: ไม่พบไฟล์โมเดลที่ {MODEL_PATH}")
-        return
+    MODEL_PATH_FINAL = PROJECT_ROOT / "models" / "ppo_universal_hft_final.zip"
+    MODEL_PATH_LATEST = PROJECT_ROOT / "models" / "ppo_universal_hft_latest.zip"
+    
+    if MODEL_PATH_FINAL.exists():
+        MODEL_PATH = MODEL_PATH_FINAL
+    elif MODEL_PATH_LATEST.exists():
+        MODEL_PATH = MODEL_PATH_LATEST
+    else:
+        print(f"❌ [Error] Universal Model not found.")
+        sys.exit(1)
 
-    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-    print(f"🤖 Loading Agent from {MODEL_PATH.name} on {device.type.upper()}...")
-    model = PPO.load(str(MODEL_PATH), device=device)
+    print(f"🤖 Loading Agent from {MODEL_PATH.name} on CPU...")
+    model = PPO.load(str(MODEL_PATH), device="cpu")
 
     # 3. เตรียมข้อมูลและ Environment
-    test_data = load_testset_data(pair_name, data_config)
+    test_data = load_testset_data(pair_name)
     env = BinanceMarketMakerEnv(test_data, env_config)
     
     history = {"mid_price": [], "pnl": [], "inventory": [], "spread_action": [], "skew_action": []}
 
-    print(f"🚀 Running Backtest on OUT-OF-SAMPLE Data...")
+    print(f"🚀 Running Backtest on OUT-OF-SAMPLE Data ({len(test_data)} steps)...")
     obs, info = env.reset()
     done = False
     
@@ -135,16 +142,9 @@ def main():
     fig, axes = plt.subplots(3, 1, figsize=(12, 14), gridspec_kw={'height_ratios': [2, 1, 1]})
     fig.suptitle(f'HFT Market Maker [{pair_name.upper()}/USDT] - Out-of-Sample Evaluation', fontsize=18, fontweight='bold')
 
-    # กรองข้อมูลไม่ให้กราฟแน่นเกินไปถ้ารันยาว
-    max_plot_points = 5000
-    if len(history["pnl"]) > max_plot_points:
-        step = len(history["pnl"]) // max_plot_points
-        for key in history:
-            history[key] = history[key][::step]
-
     time_steps = np.arange(len(history["pnl"]))
 
-    # แถว 1: PnL & Metrics Box
+    # แถว 1: PnL
     ax1 = axes[0]
     ax1.plot(time_steps, history["pnl"], color='green', label='Net PnL (USD)', linewidth=2)
     ax1.set_ylabel('Net PnL (USD)', color='green', fontweight='bold')
@@ -155,7 +155,6 @@ def main():
     ax1_twin.plot(time_steps, history["mid_price"], color='gray', alpha=0.5, label='Mid Price')
     ax1_twin.legend(loc='upper right')
     
-    # ⭐️ เพิ่มกล่อง Text แสดง Sharpe/Sortino
     textstr = '\n'.join((
         f'Final Net PnL: ${final_pnl:.2f}',
         f'Sharpe Ratio: {sharpe:.2f}',
@@ -164,8 +163,7 @@ def main():
     props = dict(boxstyle='round', facecolor='white', alpha=0.8, edgecolor='gray')
     ax1.text(0.02, 0.05, textstr, transform=ax1.transAxes, fontsize=12,
             verticalalignment='bottom', bbox=props, fontweight='bold', color='#1f2937')
-            
-    ax1.set_title("Profitability & Red Queen's Trap Resistance", fontweight='bold')
+    ax1.set_title("Profitability & Market Price", fontweight='bold')
 
     # แถว 2: Inventory
     max_inv = env_config.get('max_inventory', 0.002)
@@ -180,26 +178,22 @@ def main():
 
     # แถว 3: Agent Actions (Spread / Skew)
     ax3 = axes[2]
-    # สมมติการดึงค่ากลับจาก Action Space
     spread_usd = ((history["spread_action"] + 1.0) / 2.0) * env_config.get('max_spread_multiplier', 10.0)
     skew_usd = history["skew_action"] * env_config.get('max_skew_usd', 20.0)
 
-    ax3.plot(time_steps, spread_usd, color='purple', label='Spread Control ($\gamma$)', alpha=0.8)
+    ax3.plot(time_steps, spread_usd, color='purple', label=r'Spread Control', alpha=0.8)
     ax3.plot(time_steps, skew_usd, color='orange', label='Micro-Skew (USD)', alpha=0.8)
     ax3.axhline(0, color='black', linestyle='--', alpha=0.5)
     ax3.set_ylabel('Parameter Action')
     ax3.set_xlabel('Time Steps')
-    ax3.set_title("Agent Parameter Tuning (AS-Avatar)")
+    ax3.set_title("Agent Parameter Tuning")
     ax3.legend(loc='upper right')
     ax3.grid(True, alpha=0.3)
 
     plt.tight_layout()
     
-    if args.save_dir:
-        save_path = Path(args.save_dir) / f"backtest_{pair_name}_out_of_sample.png"
-    else:
-        save_path = PROJECT_ROOT / "results" / f"backtest_{pair_name}_out_of_sample.png"
-        save_path.parent.mkdir(parents=True, exist_ok=True)
+    save_path = Path(args.save_dir) / f"backtest_{pair_name}_out_of_sample.png" if args.save_dir else PROJECT_ROOT / "results" / f"backtest_{pair_name}_out_of_sample.png"
+    save_path.parent.mkdir(parents=True, exist_ok=True)
         
     plt.savefig(save_path, dpi=300)
     print(f"🎉 Dashboard Saved Successfully at: {save_path}")

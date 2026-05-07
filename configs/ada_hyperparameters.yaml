@@ -1,0 +1,18 @@
+# ==========================================
+# 🧠 BTC PPO Agent Hyperparameters (Anti-Collapse Edition)
+# ==========================================
+ppo:
+  learning_rate: 0.0001  
+  n_steps: 2048
+  batch_size: 256
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  
+  # 💥 เพิ่ม Entropy 5 เท่า! (สำคัญมาก) 
+  ent_coef: 0.05 
+
+  net_arch:
+    pi: [256, 256]
+    vf: [256, 256]

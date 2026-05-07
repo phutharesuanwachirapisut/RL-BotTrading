@@ -131,12 +131,17 @@ def main():
                 model = PPO(
                     "MlpPolicy", 
                     env, 
-                    learning_rate=0.00001, 
+                    # ⭐️ 1. Learning Rate Decay: ลด LR ลงเรื่อยๆ ตามความคืบหน้า (ยิ่งใกล้จบ ยิ่งก้าวสั้นลง ป้องกันการลื่นล้มช่วงท้าย)
+                    learning_rate=lambda progress_remaining: progress_remaining * 0.00001, 
                     n_steps=hyper_config['ppo'].get('n_steps', 2048),
                     batch_size=hyper_config['ppo'].get('batch_size', 256),
+                    # ⭐️ 2. ลดค่าการสุ่มลงอีก เพื่อให้มันนิ่งขึ้น
                     ent_coef=0.01, 
-                    max_grad_norm=0.2, 
+                    # ⭐️ 3. บีบเพดาน Gradient ให้แคบลงไปอีกขั้น
+                    max_grad_norm=0.1, 
                     clip_range=0.1,
+                    # ⭐️ 4. ใส่หมวกกันน็อกชั้นในสุดให้ Value Network (ป้องกันตัวเลขสะสมจนระเบิด)
+                    clip_range_vf=0.1, 
                     tensorboard_log=str(TENSORBOARD_LOG),
                     device="cpu", 
                     verbose=0 
