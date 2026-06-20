@@ -1,6 +1,6 @@
 data/raw/
 data/processed/
-log/tensorboard*
+logs/
 # Environments
 .env
 
